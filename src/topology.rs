@@ -1,14 +1,25 @@
+/// Spatial placement and resolution descriptor for OMID physical control objects.
+///
+/// Sent during system handshakes to inform the host of a control's physical layout
+/// and resolution properties for UI and haptic map rendering.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(C)]
 pub struct TopologyDescriptor {
+    /// The unique identifier of the target control object.
     pub object_id: u16,
+    /// The classification of the control (e.g. 0x01 = Fader, 0x02 = Key, 0x03 = XY Pad).
     pub object_type: u8,
+    /// Physical location offset on the horizontal X axis (in millimeters).
     pub spatial_x: u16,
+    /// Physical location offset on the vertical Y axis (in millimeters).
     pub spatial_y: u16,
+    /// The bit resolution of the sensor (e.g. 12 for 12-bit ADC, 16 for 16-bit ADC).
     pub resolution: u8,
 }
 
 impl TopologyDescriptor {
+    /// Creates a new `TopologyDescriptor`.
+    #[inline]
     pub fn new(object_id: u16, object_type: u8, spatial_x: u16, spatial_y: u16, resolution: u8) -> Self {
         Self {
             object_id,
@@ -20,7 +31,9 @@ impl TopologyDescriptor {
     }
 
     /// Serializes the topology descriptor to an 8-byte array.
+    ///
     /// Uses little-endian byte ordering.
+    #[inline]
     pub fn to_bytes(&self) -> [u8; 8] {
         let mut bytes = [0u8; 8];
         
@@ -44,7 +57,9 @@ impl TopologyDescriptor {
     }
 
     /// Deserializes a topology descriptor from an 8-byte array.
+    ///
     /// Expects little-endian byte ordering.
+    #[inline]
     pub fn from_bytes(bytes: &[u8; 8]) -> Self {
         let object_id = u16::from_le_bytes([bytes[0], bytes[1]]);
         let object_type = bytes[2];

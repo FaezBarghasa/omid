@@ -413,7 +413,7 @@ impl WifiDriver {
     ///
     /// Returns `OmidError::IoError` if the socket connection fails.
     pub fn connect(&self) -> Result<(), OmidError> {
-        let addr = format!("{}:{}", self.ip_address, self.port);
+        let addr = std::format!("{}:{}", self.ip_address, self.port);
         if self.use_tcp {
             let stream = TcpStream::connect(&addr).map_err(|_| OmidError::IoError)?;
             if self.tcp_nodelay {

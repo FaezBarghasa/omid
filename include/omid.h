@@ -8,10 +8,19 @@
 #include <stdint.h>
 #include <stdlib.h>
 
+/**
+ * Bitmask for the touched state.
+ */
 #define OmidFlags_TOUCHED 1
 
+/**
+ * Bitmask for the raw data flag.
+ */
 #define OmidFlags_RAW_DATA 2
 
+/**
+ * Bitmask for the direction flag.
+ */
 #define OmidFlags_DIRECTION 4
 
 /**
@@ -19,18 +28,45 @@
  */
 #define UactFrame_FRAME_SIZE ((C * 4) + 8)
 
+/**
+ * The type of action or transaction represented by an Omid control packet.
+ */
 enum EventType
 #if __STDC_VERSION__ >= 202311L
   : uint8_t
 #endif // __STDC_VERSION__ >= 202311L
  {
+  /**
+   * Unrecognized or placeholder event.
+   */
   Unknown = 0,
+  /**
+   * Absolute parameter change (e.g. fader move).
+   */
   AbsoluteChange = 1,
+  /**
+   * Relative parameter adjustment (e.g. rotary encoder tick).
+   */
   RelativeDelta = 2,
+  /**
+   * Key press event on a piano keyboard or pad.
+   */
   KeyPress = 3,
+  /**
+   * Key release event on a piano keyboard or pad.
+   */
   KeyRelease = 4,
+  /**
+   * Direct command/haptic vibration to the device's actuator.
+   */
   HapticFeedback = 5,
+  /**
+   * Event to update local LEDs or displays on the controller.
+   */
   VisualUpdate = 6,
+  /**
+   * Initial startup or clock sync handshake between host and controller.
+   */
   SystemHandshake = 7,
 };
 #if __STDC_VERSION__ >= 202311L
@@ -39,23 +75,71 @@ typedef enum EventType EventType;
 typedef uint8_t EventType;
 #endif // __STDC_VERSION__ >= 202311L
 
+/**
+ * A wrapper struct for the 8-bit packet configuration flags field.
+ *
+ * Layout:
+ * - Bit 0: Touched flag (active touch sensor)
+ * - Bit 1: Raw Data flag (specifies if payload is ADC/raw integer vs normalized f32)
+ * - Bit 2: Direction flag (0 for positive, 1 for negative increment)
+ * - Bits 3..7: Sub-sample microsecond timer delta offset (0..31 ticks)
+ */
 typedef struct OmidFlags OmidFlags;
 
+/**
+ * An 8-byte unified control & haptic packet for the OMID Protocol.
+ *
+ * Packets are designed to be extremely compact, predictable, and suitable for
+ * lock-free routing and direct DMA hardware transfers.
+ */
 typedef struct OmidPacket {
+  /**
+   * The unique 16-bit identifier of the target control object (e.g. key index, fader number).
+   */
   uint16_t object_id;
+  /**
+   * The raw byte value representing the type of event (mapped to `EventType`).
+   */
   uint8_t event_type;
+  /**
+   * Configuration flags containing state flags (touched, raw data, direction) and the sub-sample timer delta.
+   */
   uint8_t flags;
+  /**
+   * The 32-bit payload, which can represent floats, integers, xy coordinates, or ADC values.
+   */
   uint32_t payload;
 } OmidPacket;
 
 
 
 
+/**
+ * Spatial placement and resolution descriptor for OMID physical control objects.
+ *
+ * Sent during system handshakes to inform the host of a control's physical layout
+ * and resolution properties for UI and haptic map rendering.
+ */
 typedef struct TopologyDescriptor {
+  /**
+   * The unique identifier of the target control object.
+   */
   uint16_t object_id;
+  /**
+   * The classification of the control (e.g. 0x01 = Fader, 0x02 = Key, 0x03 = XY Pad).
+   */
   uint8_t object_type;
+  /**
+   * Physical location offset on the horizontal X axis (in millimeters).
+   */
   uint16_t spatial_x;
+  /**
+   * Physical location offset on the vertical Y axis (in millimeters).
+   */
   uint16_t spatial_y;
+  /**
+   * The bit resolution of the sensor (e.g. 12 for 12-bit ADC, 16 for 16-bit ADC).
+   */
   uint8_t resolution;
 } TopologyDescriptor;
 
@@ -65,6 +149,9 @@ typedef struct cpu_set_t {
   uintptr_t bits[16];
 } cpu_set_t;
 
+/**
+ * Alias for relative delta changes.
+ */
 #define EventType_RelativeChange RelativeDelta
 
 struct OmidPacket omid_packet_new(uint16_t object_id,
