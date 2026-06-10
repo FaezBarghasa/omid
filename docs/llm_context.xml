@@ -8,10 +8,11 @@
     </project_info>
 
     <directory_layout>
-        <file path="Cargo.toml">Crate manifest configuring standard and no_std features, zero dependencies.</file>
+        <file path="Cargo.toml">Crate manifest configuring standard and no_std features, cdylib target, and cbindgen dependencies.</file>
+        <file path="build.rs">Build script automating C header generation in include/omid.h via cbindgen.</file>
         <file path="LICENSE-MIT">MIT Open Source License terms.</file>
         <file path="LICENSE-APACHE">Apache 2.0 Open Source License terms.</file>
-        <file path="src/lib.rs">Library root conditionally importing standard modules and exporting core APIs and unit tests.</file>
+        <file path="src/lib.rs">Library root conditionally importing standard modules and exporting core APIs, unit tests, and FFI layer.</file>
         <file path="src/event.rs">Core enums mapping EventTypes and ForceProfiles alongside OmidFlags bitwise helpers.</file>
         <file path="src/packet.rs">OmidPacket implementation detailing serialization, haptic feedback, and 12-bit/16-bit high-resolution ADC constructors and getters.</file>
         <file path="src/queue.rs">High-performance, lock-free Single-Producer Single-Consumer (SPSC) Ring Buffer tailored for real-time DSP pipelines.</file>
@@ -19,6 +20,8 @@
         <file path="src/uact.rs">Unified Audio &amp; Control Transport (UACT) frame modeling, zero-heap Demuxer, and sample-accurate ClockSynchronizer.</file>
         <file path="src/dispatcher.rs">SPMC OmidHostDispatcher executing real-time thread affinity pinning and Voice ID dispatching (Object ID % Worker Count).</file>
         <file path="src/driver.rs">OmidDriver trait, MockHardwareDriver endpoints, platform drivers (Linux io_uring, Windows IOCP, macOS RT constraints), and IoT drivers (Bluetooth 5 and WiFi).</file>
+        <file path="src/ffi.rs">FFI module exporting C-compatible wrapper functions for OmidPacket, OmidFlags, and TopologyDescriptor.</file>
+        <file path="bindings/">Contains native wrappers and FFI loaders for C++, Go, Python, TypeScript, Dart, C#, Java, and Kotlin.</file>
     </directory_layout>
 
     <data_layouts>

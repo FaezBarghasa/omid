@@ -63,3 +63,31 @@ fn test_custom_driver_flow() {
     assert_eq!(driver.poll_control().unwrap().payload_as_adc16(), 65535);
 }
 ```
+
+---
+
+## 4. FFI and Multi-Language Bindings
+
+Omid exports a universal C-API from `src/ffi.rs` to allow VST and driver developers working in other languages to build on top of the Omid standard.
+
+### Build Artifacts
+- **C Header:** Generated automatically in `include/omid.h` by `cbindgen` on compile.
+- **Shared Library:** Generated as `target/debug/libomid.so` / `libomid.dylib` / `omid.dll` by Cargo (`crate-type = ["cdylib"]`).
+
+### Exposing New Functions to FFI
+Any new FFI functions must be added to `src/ffi.rs` and comply with the following rules:
+1. Use `#[unsafe(no_mangle)]` for all FFI exports (mandatory in Rust 2024 edition).
+2. Function signatures must use C-compatible types (e.g., `*const u8`, `*mut u16`, primitive types, or `#[repr(C)]` structs like `OmidPacket` and `TopologyDescriptor`).
+3. Explicitly wrap raw pointer dereferences or unsafe memory actions (e.g., `copy_nonoverlapping`) in `unsafe { ... }` blocks, even inside `unsafe fn` declarations.
+4. Ensure the return value is FFI-safe (avoid Rust-specific enums/structs without `#[repr(C)]` or `#[repr(u8)]`).
+
+### Generating Bindings
+The bindings directory structure is organized as:
+- `bindings/cpp/`: C++ header wrapper (`omid.hpp`).
+- `bindings/go/`: Go cgo package.
+- `bindings/python/`: Python `ctypes` wrapper.
+- `bindings/typescript/`: TypeScript type mappings & Bun/Deno FFI loaders.
+- `bindings/dart/`: Dart `dart:ffi` bindings.
+- `bindings/csharp/`: C# P/Invoke mappings.
+- `bindings/java/`: Java JNA library.
+- `bindings/kotlin/`: Kotlin JNA wrapper.

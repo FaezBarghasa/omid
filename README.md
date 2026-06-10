@@ -67,3 +67,23 @@ Each `OmidPacket` strictly adheres to an 8-byte structure in memory:
 - **`event_type` (1 byte):** Functional type of the event (e.g., `0x03` for `KeyPress`, `0x05` for `HapticFeedback`).
 - **`flags` (1 byte):** Bitfield for state modifiers (Touch state, Raw data, Direction, Sub-sample timer delta / Force Profile).
 - **`payload` (4 bytes):** 32-bit payload space, used for float values, 12/16-bit integers, or XY coordinates.
+
+## Multi-Language FFI Bindings
+
+Omid exports a universal C-API from its dynamic library (`libomid.so` / `omid.dll` / `libomid.dylib`) and includes native wrappers for key languages. This allows VST and hardware driver developers to use Omid in their stack of choice:
+
+- **C++:** Native wrapper class in [bindings/cpp/omid.hpp](file:///home/jrad/RustroverProjects/omid/bindings/cpp/omid.hpp) wrapping the C header.
+- **Go:** `cgo` bindings in [bindings/go/omid/omid.go](file:///home/jrad/RustroverProjects/omid/bindings/go/omid/omid.go).
+- **Python:** High-level wrapper in [bindings/python/omid.py](file:///home/jrad/RustroverProjects/omid/bindings/python/omid.py) using `ctypes`.
+- **TypeScript:** High-performance FFI mapping in [bindings/typescript/omid.ts](file:///home/jrad/RustroverProjects/omid/bindings/typescript/omid.ts) (optimized for Bun/Deno/Node.js).
+- **Dart:** `dart:ffi` bindings in [bindings/dart/omid.dart](file:///home/jrad/RustroverProjects/omid/bindings/dart/omid.dart) (Flutter-compatible).
+- **C#:** P/Invoke wrappers in [bindings/csharp/Omid.cs](file:///home/jrad/RustroverProjects/omid/bindings/csharp/Omid.cs).
+- **Java / Kotlin:** JNA-based bindings in [bindings/java/Omid.java](file:///home/jrad/RustroverProjects/omid/bindings/java/Omid.java) and idiomatic Kotlin wrappers in [bindings/kotlin/Omid.kt](file:///home/jrad/RustroverProjects/omid/bindings/kotlin/Omid.kt).
+
+### Compilation for FFI
+
+To compile Omid as a shared dynamic library and generate the C headers (`include/omid.h`):
+```bash
+cargo build --release --all-features
+```
+The compiled library will be in `target/release/` and header files in `include/`.
