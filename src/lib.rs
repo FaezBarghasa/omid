@@ -23,7 +23,7 @@ pub use uact::{UactFrame, UactDemuxer, ClockSynchronizer};
 #[cfg(feature = "std")]
 pub use dispatcher::{OmidHostDispatcher, DispatcherStats};
 #[cfg(feature = "std")]
-pub use driver::{OmidDriver, MockHardwareDriver, LinuxDriver, WindowsDriver, MacosDriver};
+pub use driver::{OmidDriver, MockHardwareDriver, LinuxDriver, WindowsDriver, MacosDriver, BleDriver, WifiDriver};
 
 
 #[cfg(test)]
@@ -207,5 +207,54 @@ mod tests {
         let res = driver.submit_control(p_overflow);
         assert!(res.is_err());
         assert_eq!(res.unwrap_err(), "Queue Overflow - DSP Buffer Saturated");
+    }
+
+    #[test]
+    #[cfg(feature = "std")]
+    fn test_ble_driver() {
+        let hardware = MockHardwareDriver::new();
+        let mut driver = BleDriver::new(hardware, true, 256, true);
+        
+        // Assert initial state
+        assert!(!driver.is_connected());
+        assert_eq!(driver.mtu(), 256);
+        assert!(driver.is_l2cap_coc_active());
+
+        // When disconnected, submit should fail
+        let flags = OmidFlags::new(false, false, false, 0);
+        let p = OmidPacket::new_adc16(1, EventType::KeyPress, flags, 1000);
+        assert!(driver.submit_control(p).is_err());
+
+        // Connect and test
+        driver.connect();
+        assert!(driver.is_connected());
+        driver.submit_control(p).unwrap();
+        assert_eq!(driver.poll_control().unwrap().payload_as_adc16(), 1000);
+
+        // MTU negotiations
+        assert_eq!(driver.negotiate_mtu(600), 512); // Clamped at 512
+        assert_eq!(driver.negotiate_mtu(10), 23);   // Clamped at 23
+    }
+
+    #[test]
+    #[cfg(feature = "std")]
+    fn test_wifi_driver() {
+        let hardware = MockHardwareDriver::new();
+        let driver = WifiDriver::new(hardware, true, std::string::String::from("192.168.1.50"), 8000, true);
+
+        // Assert initial state
+        assert!(!driver.is_connected());
+        assert_eq!(driver.ip_address(), "192.168.1.50");
+        assert_eq!(driver.port(), 8000);
+        assert!(driver.tcp_nodelay());
+        assert!(driver.is_tcp());
+
+        // Test connected state submission
+        driver.connect();
+        assert!(driver.is_connected());
+        let flags = OmidFlags::new(false, false, false, 0);
+        let p = OmidPacket::new_adc12(2, EventType::AbsoluteChange, flags, 2000);
+        driver.submit_control(p).unwrap();
+        assert_eq!(driver.poll_control().unwrap().payload_as_adc12(), 2000);
     }
 }
