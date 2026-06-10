@@ -166,5 +166,76 @@ impl OmidPacket {
             payload: val,
         }
     }
+
+    /// Creates a new haptic feedback packet.
+    /// The force profile ID is encoded in the flags field.
+    pub fn new_haptic(object_id: u16, profile: crate::event::ForceProfile, intensity: f32) -> Self {
+        Self {
+            object_id,
+            event_type: crate::event::EventType::HapticFeedback as u8,
+            flags: profile as u8,
+            payload: intensity.to_bits(),
+        }
+    }
+
+    /// Parses the force profile from the flags field for a haptic packet.
+    #[inline(always)]
+    pub fn haptic_force_profile(&self) -> Result<crate::event::ForceProfile, u8> {
+        crate::event::ForceProfile::try_from(self.flags)
+    }
+
+    /// Extracts the haptic intensity payload as a 32-bit float.
+    #[inline(always)]
+    pub fn haptic_intensity(&self) -> f32 {
+        self.payload_as_f32()
+    }
+
+    /// Constructs a packet containing a raw 12-bit ADC value, setting the RAW_DATA flag.
+    pub fn new_adc12(object_id: u16, event_type: EventType, flags: impl Into<OmidFlags>, val: u16) -> Self {
+        let mut f: OmidFlags = flags.into();
+        f.0 |= OmidFlags::RAW_DATA;
+        let capped_val = val & 0x0FFF;
+        Self {
+            object_id,
+            event_type: event_type as u8,
+            flags: f.0,
+            payload: capped_val as u32,
+        }
+    }
+
+    /// Constructs a packet containing a raw 16-bit ADC value, setting the RAW_DATA flag.
+    pub fn new_adc16(object_id: u16, event_type: EventType, flags: impl Into<OmidFlags>, val: u16) -> Self {
+        let mut f: OmidFlags = flags.into();
+        f.0 |= OmidFlags::RAW_DATA;
+        Self {
+            object_id,
+            event_type: event_type as u8,
+            flags: f.0,
+            payload: val as u32,
+        }
+    }
+
+    /// Extracts the raw 12-bit value from the packet payload.
+    #[inline(always)]
+    pub fn payload_as_adc12(&self) -> u16 {
+        (self.payload & 0x0FFF) as u16
+    }
+
+    /// Extracts the raw 16-bit value from the packet payload.
+    #[inline(always)]
+    pub fn payload_as_adc16(&self) -> u16 {
+        (self.payload & 0xFFFF) as u16
+    }
+
+    /// Normalizes a raw ADC value to 0.0..=1.0 dynamically based on the resolution in bits.
+    #[inline(always)]
+    pub fn payload_as_normalized_f32(&self, adc_bits: u8) -> f32 {
+        if adc_bits == 0 {
+            return 0.0;
+        }
+        let max_val = (1u32 << adc_bits) - 1;
+        let val = self.payload & max_val;
+        val as f32 / max_val as f32
+    }
 }
 

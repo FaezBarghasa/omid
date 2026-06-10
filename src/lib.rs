@@ -5,7 +5,7 @@ pub mod packet;
 pub mod topology;
 
 // Re-export core types for convenience
-pub use event::{OmidEventType, OmidFlags};
+pub use event::{OmidEventType, OmidFlags, ForceProfile};
 pub use packet::OmidPacket;
 pub use topology::TopologyDescriptor;
 
@@ -16,6 +16,7 @@ extern crate std;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::event::EventType;
 
     #[test]
     fn test_packet_f32_roundtrip() {
@@ -59,5 +60,35 @@ mod tests {
         assert_eq!(parsed.spatial_x, 65000);
         assert_eq!(parsed.spatial_y, 12000);
         assert_eq!(parsed.resolution, 12);
+    }
+
+    #[test]
+    fn test_haptic_roundtrip() {
+        let packet = OmidPacket::new_haptic(0x5678, ForceProfile::SpringTension, 0.85f32);
+        let bytes = packet.to_bytes();
+        let parsed = OmidPacket::from_bytes(&bytes);
+
+        assert_eq!(parsed.object_id, 0x5678);
+        assert_eq!(parsed.event(), EventType::HapticFeedback);
+        assert_eq!(parsed.haptic_force_profile(), Ok(ForceProfile::SpringTension));
+        assert_eq!(parsed.haptic_intensity(), 0.85f32);
+    }
+
+    #[test]
+    fn test_adc_roundtrips() {
+        // Test 12-bit ADC fader (value 2048 / 4095)
+        let flags = OmidFlags::new(false, false, false, 0);
+        let packet12 = OmidPacket::new_adc12(1, EventType::AbsoluteChange, flags, 2048);
+        assert!(packet12.is_raw_data());
+        assert_eq!(packet12.payload_as_adc12(), 2048);
+        let norm12 = packet12.payload_as_normalized_f32(12);
+        assert!((norm12 - (2048.0 / 4095.0)).abs() < 1e-6);
+
+        // Test 16-bit ADC key (value 32768 / 65535)
+        let packet16 = OmidPacket::new_adc16(2, EventType::KeyPress, flags, 32768);
+        assert!(packet16.is_raw_data());
+        assert_eq!(packet16.payload_as_adc16(), 32768);
+        let norm16 = packet16.payload_as_normalized_f32(16);
+        assert!((norm16 - (32768.0 / 65535.0)).abs() < 1e-6);
     }
 }

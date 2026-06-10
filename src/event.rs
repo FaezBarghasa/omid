@@ -14,10 +14,40 @@ pub enum EventType {
 pub type OmidEventType = EventType;
 
 impl EventType {
+    #[allow(non_upper_case_globals)]
     pub const RelativeChange: Self = Self::RelativeDelta;
 
     pub fn from_u8(value: u8) -> Option<Self> {
         Self::try_from(value).ok()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum ForceProfile {
+    Unknown = 0x00,
+    HammerStrike = 0x01,
+    SpringTension = 0x02,
+    KineticDampening = 0x03,
+}
+
+impl TryFrom<u8> for ForceProfile {
+    type Error = u8;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            0x00 => Ok(Self::Unknown),
+            0x01 => Ok(Self::HammerStrike),
+            0x02 => Ok(Self::SpringTension),
+            0x03 => Ok(Self::KineticDampening),
+            other => Err(other),
+        }
+    }
+}
+
+impl From<ForceProfile> for u8 {
+    fn from(profile: ForceProfile) -> Self {
+        profile as u8
     }
 }
 
