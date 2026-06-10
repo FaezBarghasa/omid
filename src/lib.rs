@@ -1,17 +1,26 @@
 #![no_std]
 
+#[cfg(any(feature = "std", test))]
+extern crate std;
+
 pub mod event;
 pub mod packet;
+pub mod queue;
 pub mod topology;
+pub mod uact;
+
+#[cfg(feature = "std")]
+pub mod dispatcher;
 
 // Re-export core types for convenience
 pub use event::{OmidEventType, OmidFlags, ForceProfile};
 pub use packet::OmidPacket;
 pub use topology::TopologyDescriptor;
+pub use uact::{UactFrame, UactDemuxer, ClockSynchronizer};
 
-#[cfg(test)]
-#[macro_use]
-extern crate std;
+#[cfg(feature = "std")]
+pub use dispatcher::{OmidHostDispatcher, DispatcherStats};
+
 
 #[cfg(test)]
 mod tests {
@@ -90,5 +99,78 @@ mod tests {
         assert_eq!(packet16.payload_as_adc16(), 32768);
         let norm16 = packet16.payload_as_normalized_f32(16);
         assert!((norm16 - (32768.0 / 65535.0)).abs() < 1e-6);
+    }
+
+    #[test]
+    #[cfg(feature = "std")]
+    fn test_dispatcher_routing() {
+        use std::sync::Arc;
+        use std::sync::atomic::Ordering;
+        use crate::queue::SpscRingBuffer;
+
+        let stats = Arc::new(DispatcherStats::default());
+        let q0 = Arc::new(SpscRingBuffer::new());
+        let q1 = Arc::new(SpscRingBuffer::new());
+        let queues = std::vec![q0.clone(), q1.clone()];
+
+        let dispatcher = OmidHostDispatcher::new(2, queues.clone(), stats.clone());
+
+        // Dispatch a KeyPress on object_id 0 (should route to q0: 0 % 2 == 0)
+        let flags = OmidFlags::new(false, false, false, 0);
+        let p0 = OmidPacket::new_adc16(0, EventType::KeyPress, flags, 1000);
+        dispatcher.dispatch(p0, &queues).unwrap();
+
+        // Dispatch a KeyRelease on object_id 1 (should route to q1: 1 % 2 == 1)
+        let p1 = OmidPacket::new(1, EventType::KeyRelease as u8, 0, 0);
+        dispatcher.dispatch(p1, &queues).unwrap();
+
+        // Let the threads process
+        std::thread::sleep(std::time::Duration::from_millis(50));
+
+        assert_eq!(stats.key_presses.load(Ordering::Relaxed), 1);
+        assert_eq!(stats.key_releases.load(Ordering::Relaxed), 1);
+
+        dispatcher.shutdown();
+    }
+
+    #[test]
+    fn test_uact_stream_and_sync() {
+        // Create a UactFrame with 2 audio channels and a key press event
+        let flags = OmidFlags::new(false, false, false, 16); // 16 ticks delta
+        let packet = OmidPacket::new_adc16(10, EventType::KeyPress, flags, 32768);
+        let audio_data = [0.1f32, -0.2f32];
+        let frame = UactFrame::new(audio_data, packet);
+
+        // Serialize
+        let mut buffer = [0u8; 16];
+        frame.serialize(&mut buffer).unwrap();
+
+        // Deserialize
+        let parsed = UactFrame::<2>::from_bytes(&buffer).unwrap();
+        assert_eq!(parsed.audio, audio_data);
+        assert_eq!(parsed.control.object_id, 10);
+        assert_eq!(parsed.control.payload_as_adc16(), 32768);
+        assert_eq!(parsed.control.typed_flags().subsample_offset(), 16);
+
+        // Test Demuxer with chunking
+        let mut demuxer = UactDemuxer::<2>::new();
+        let mut frames_parsed = std::vec![];
+        // Feed in two halves
+        demuxer.process_bytes(&buffer[..8], |f| frames_parsed.push(f)).unwrap();
+        assert_eq!(frames_parsed.len(), 0); // shouldn't parse a full frame yet
+        demuxer.process_bytes(&buffer[8..], |f| frames_parsed.push(f)).unwrap();
+        assert_eq!(frames_parsed.len(), 1);
+        assert_eq!(frames_parsed[0], frame);
+
+        // Test Clock Synchronizer
+        // Clock = 122.88 MHz, sample rate = 192000 Hz.
+        let sync = ClockSynchronizer::new(192000, 122880000.0);
+        let seconds = sync.timer_delta_to_seconds(16);
+        let expected_seconds = 16.0 / 122880000.0;
+        assert!((seconds - expected_seconds).abs() < 1e-12);
+        
+        let sample_offset = sync.sample_offset(16);
+        let expected_sample_offset = expected_seconds * 192000.0;
+        assert!((sample_offset - expected_sample_offset).abs() < 1e-12);
     }
 }
