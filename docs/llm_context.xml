@@ -1,0 +1,93 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<llm_context>
+    <project_info>
+        <name>Omid (Object-MIDI)</name>
+        <version>2.0.0</version>
+        <standard>Global Unified Audio, Control, &amp; Driver Standard</standard>
+        <philosophy>Predictable, low-overhead, zero-copy, highly parallelized, bare-metal friendly (#![no_std] core) digital music instrument protocol.</philosophy>
+    </project_info>
+
+    <directory_layout>
+        <file path="Cargo.toml">Crate manifest configuring standard and no_std features, zero dependencies.</file>
+        <file path="src/lib.rs">Library root conditionally importing standard modules and exporting core APIs and unit tests.</file>
+        <file path="src/event.rs">Core enums mapping EventTypes and ForceProfiles alongside OmidFlags bitwise helpers.</file>
+        <file path="src/packet.rs">OmidPacket implementation detailing serialization, haptic feedback, and 12-bit/16-bit high-resolution ADC constructors and getters.</file>
+        <file path="src/queue.rs">High-performance, lock-free Single-Producer Single-Consumer (SPSC) Ring Buffer tailored for real-time DSP pipelines.</file>
+        <file path="src/topology.rs">TopologyDescriptor defining physical hardware coordinates and resolution mapping.</file>
+        <file path="src/uact.rs">Unified Audio &amp; Control Transport (UACT) frame modeling, zero-heap Demuxer, and sample-accurate ClockSynchronizer.</file>
+        <file path="src/dispatcher.rs">SPMC OmidHostDispatcher executing real-time thread affinity pinning and Voice ID dispatching (Object ID % Worker Count).</file>
+        <file path="src/driver.rs">OmidDriver trait, MockHardwareDriver endpoints, platform drivers (Linux io_uring, Windows IOCP, macOS RT constraints), and IoT drivers (Bluetooth 5 and WiFi).</file>
+    </directory_layout>
+
+    <data_layouts>
+        <omid_packet>
+            <byte_size>8 bytes</byte_size>
+            <alignment>4-byte boundary</alignment>
+            <byte_map>
+                <field offset="0" size="2" type="u16">object_id (Little-Endian)</field>
+                <field offset="2" size="1" type="u8">event_type</field>
+                <field offset="3" size="1" type="u8">flags (Bitmask: Bit 0=Touched, Bit 1=RawData, Bit 2=Direction, Bits 3-7=TimerDelta)</field>
+                <field offset="4" size="4" type="u32">payload (Zero-copy IEEE 754 f32, dual u16 XY coords, or raw ADC bits)</field>
+            </byte_map>
+            <adc_mapping>
+                <description>When the RawData flag (bit 1 of flags) is set, the payload represents a raw integer value.</description>
+                <adc12>Capped at 4095, stored in the lower 12 bits of the payload.</adc12>
+                <adc16>Stored in the lower 16 bits of the payload.</adc16>
+                <normalization>normalized_f32 = raw_value / (2^adc_bits - 1)</normalization>
+            </adc_mapping>
+            <haptic_mapping>
+                <event_type>0x05 (HapticFeedback)</event_type>
+                <flags_byte>ForceProfile ID (0x01 = HammerStrike, 0x02 = SpringTension, 0x03 = KineticDampening)</flags_byte>
+                <payload_byte>f32 representing actuator electromagnetic resistance intensity</payload_byte>
+            </haptic_mapping>
+        </omid_packet>
+
+        <uact_frame>
+            <description>Interleaves synchronous multi-channel digital audio and control packets under a single physical clock domain (e.g. 122.88 MHz PLL clock).</description>
+            <formula>Frame Size = C * 4 + 8 bytes (where C is the audio channel count)</formula>
+            <layout>
+                <section size="C * 4" type="[f32; C]">Synchronous 32-bit float PCM audio samples</section>
+                <section size="8" type="OmidPacket">OMID Control packet</section>
+            </layout>
+            <clock_synchronization>
+                <formula>Sample Offset = (Timer Delta / PLL Clock Frequency) * Sample Rate</formula>
+            </clock_synchronization>
+        </uact_frame>
+    </data_layouts>
+
+    <concurrency_model>
+        <spsc_queue>
+            <struct>SpscRingBuffer</struct>
+            <type>Single-Producer Single-Consumer</type>
+            <lock_free>Yes (UnsafeCell and AtomicUsize index wrapping with Acquire/Release memory ordering)</lock_free>
+            <allocation>Zero heap allocation (buffer array of Option&lt;T&gt; on stack/static memory)</allocation>
+        </spsc_queue>
+        <parallel_dispatcher>
+            <struct>OmidHostDispatcher</struct>
+            <topology>
+                <receiver_thread>Core 1 (Isolated) - drains raw USB bulk streams and routes packets.</receiver_thread>
+                <dispatcher_logic>Voice ID = Object ID % Worker Count. Routes packets to SpscRingBuffer queues without mutexes.</dispatcher_logic>
+                <worker_threads>Worker pools pinned to separate CPU cores (Core 2, 3, etc.) running adaptive spin-looping.</worker_threads>
+                <pinning>On Linux, directly pins threads via raw pthread FFI pthread_setaffinity_np.</pinning>
+            </topology>
+        </parallel_dispatcher>
+    </concurrency_model>
+
+    <driver_and_transport_specifications>
+        <platform_drivers>
+            <linux>LinuxDriver simulating usbfs file handles read/written asynchronously via io_uring submit/completion queues.</linux>
+            <windows>WindowsDriver simulating WinUSB Direct DMA (KBDD) via VirtualLock memory and overlapped IOCP threads.</windows>
+            <macos>MacosDriver simulating IOUserUSBInterface utilizing Darwin Thread Time Constraint real-time policies.</macos>
+        </platform_drivers>
+        <iot_drivers>
+            <bluetooth5>BleDriver simulating Bluetooth 5 advertising, MTU negotiations (23 to 512 bytes), BLE 2M PHY, and L2CAP Connection-Oriented Channels (CoC).</bluetooth5>
+            <wifi>WifiDriver simulating low-overhead TCP/UDP socket connections supporting socket-level configuration options like TCP_NODELAY.</wifi>
+        </iot_drivers>
+    </driver_and_transport_specifications>
+
+    <compilation_and_verification>
+        <no_std_mode>Verified by running: cargo build --no-default-features</no_std_mode>
+        <std_mode>Verified by running: cargo test --all-features</std_mode>
+        <latency_metrics>Control pipeline latency targeted at under 10 microseconds queue-to-queue transfer.</latency_metrics>
+    </compilation_and_verification>
+</llm_context>
