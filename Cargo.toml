@@ -1,6 +1,6 @@
 [package]
 name = "omid"
-version = "0.1.0"
+version = "0.2.2"
 edition = "2024"
 description = "Omid (Object-MIDI) Protocol no_std core library"
 license = "MIT OR Apache-2.0"
@@ -28,8 +28,24 @@ license = "MIT OR Apache-2.0"
 section = "libs"
 priority = "optional"
 assets = [
-    ["target/release/libomid.so", "/usr/lib/libomid.so", "644"],
-    ["include/omid.h", "/usr/include/omid.h", "644"],
-    ["bindings/cpp/omid.hpp", "/usr/include/omid.hpp", "644"],
-    ["LICENSE-MIT", "/usr/share/doc/libomid/copyright", "644"]
+    [
+        "target/release/libomid.so",
+        "/usr/lib/libomid.so",
+        "644",
+    ],
+    [
+        "include/omid.h",
+        "/usr/include/omid.h",
+        "644",
+    ],
+    [
+        "bindings/cpp/omid.hpp",
+        "/usr/include/omid.hpp",
+        "644",
+    ],
+    [
+        "LICENSE-MIT",
+        "/usr/share/doc/libomid/copyright",
+        "644",
+    ],
 ]

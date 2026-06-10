@@ -8,20 +8,26 @@
     </project_info>
 
     <directory_layout>
-        <file path="Cargo.toml">Crate manifest configuring standard and no_std features, cdylib target, and cbindgen dependencies.</file>
+        <file path="Cargo.toml">Crate manifest configuring standard and no_std features, cdylib target, bridge feature, and debian package packaging metadata.</file>
         <file path="build.rs">Build script automating C header generation in include/omid.h via cbindgen.</file>
         <file path="LICENSE-MIT">MIT Open Source License terms.</file>
         <file path="LICENSE-APACHE">Apache 2.0 Open Source License terms.</file>
         <file path="src/lib.rs">Library root conditionally importing standard modules and exporting core APIs, unit tests, and FFI layer.</file>
         <file path="src/event.rs">Core enums mapping EventTypes and ForceProfiles alongside OmidFlags bitwise helpers.</file>
         <file path="src/packet.rs">OmidPacket implementation detailing serialization, haptic feedback, and 12-bit/16-bit high-resolution ADC constructors and getters.</file>
-        <file path="src/queue.rs">High-performance, lock-free Single-Producer Single-Consumer (SPSC) Ring Buffer tailored for real-time DSP pipelines.</file>
+        <file path="src/queue.rs">High-performance, lock-free Single-Producer Single-Consumer (SPSC) Ring Buffer with 64-byte cache line alignment and power-of-two capacity masking.</file>
         <file path="src/topology.rs">TopologyDescriptor defining physical hardware coordinates and resolution mapping.</file>
-        <file path="src/uact.rs">Unified Audio &amp; Control Transport (UACT) frame modeling, zero-heap Demuxer, and sample-accurate ClockSynchronizer.</file>
-        <file path="src/dispatcher.rs">SPMC OmidHostDispatcher executing real-time thread affinity pinning and Voice ID dispatching (Object ID % Worker Count).</file>
-        <file path="src/driver.rs">OmidDriver trait, MockHardwareDriver endpoints, platform drivers (Linux io_uring, Windows IOCP, macOS RT constraints), and IoT drivers (Bluetooth 5 and WiFi).</file>
+        <file path="src/uact.rs">Unified Audio &amp; Control Transport (UACT) frame modeling, zero-heap circular buffer Demuxer, and sample-accurate ClockSynchronizer.</file>
+        <file path="src/dispatcher.rs">SPMC OmidHostDispatcher executing real-time thread affinity pinning, Voice ID dispatching, registered DSP callbacks, and Instant-based latency hooks.</file>
+        <file path="src/driver.rs">OmidDriver trait, MockHardwareDriver endpoints (ep1_in / ep1_out), platform drivers (Linux io_uring / Windows IOCP), and IoT drivers (Bluetooth 5 and WiFi sockets).</file>
         <file path="src/ffi.rs">FFI module exporting C-compatible wrapper functions for OmidPacket, OmidFlags, and TopologyDescriptor.</file>
+        <file path="src/midi.rs">MIDI 1.0 (Note, CC, Pitch Bend) and MIDI 2.0 Sysex8 UMP translation utilities.</file>
+        <file path="src/bin/bridge.rs">On-the-fly legacy bridge daemon using midir to convert standard MIDI port data to/from Omid.</file>
         <file path="bindings/">Contains native wrappers and FFI loaders for C++, Go, Python, TypeScript, Dart, C#, Java, and Kotlin.</file>
+        <file path="bindings/web/omid_web.js">JavaScript WebUSB bindings allowing browser-based DAWs to parse and stream Omid packets directly.</file>
+        <file path="drivers/linux-gadget/setup_gadget.sh">ConfigFS script exposing Raspberry Pi/BeagleBone USB controllers as Omid hardware gadgets.</file>
+        <file path="drivers/windows/OmidWinUsb.inf">WinUSB Windows driver installation template.</file>
+        <file path="docs/porting_guide.md">Embedded guide outlining C11 packet layer definitions, FreeRTOS/Zephyr task loops, and I2S interleaving designs.</file>
     </directory_layout>
 
     <data_layouts>
@@ -66,6 +72,8 @@
             <type>Single-Producer Single-Consumer</type>
             <lock_free>Yes (UnsafeCell and AtomicUsize index wrapping with Acquire/Release memory ordering)</lock_free>
             <allocation>Zero heap allocation (buffer array of Option&lt;T&gt; on stack/static memory)</allocation>
+            <cache_alignment>64-byte aligned indexes to prevent false sharing cache bouncing</cache_alignment>
+            <index_optimization>Mask-based bitwise index wrapping `&amp; (N - 1)` (requires N to be power-of-two)</index_optimization>
         </spsc_queue>
         <parallel_dispatcher>
             <struct>OmidHostDispatcher</struct>
@@ -80,13 +88,13 @@
 
     <driver_and_transport_specifications>
         <platform_drivers>
-            <linux>LinuxDriver simulating usbfs file handles read/written asynchronously via io_uring submit/completion queues.</linux>
-            <windows>WindowsDriver simulating WinUSB Direct DMA (KBDD) via VirtualLock memory and overlapped IOCP threads.</windows>
-            <macos>MacosDriver simulating IOUserUSBInterface utilizing Darwin Thread Time Constraint real-time policies.</macos>
+            <linux>LinuxDriver opening `/dev/omid0` file handles read/written asynchronously via io_uring submit/completion queues.</linux>
+            <windows>WindowsDriver exposing WinUSB Direct DMA via overlapped IOCP threads.</windows>
+            <macos>MacosDriver utilizing Darwin Thread Time Constraint real-time policies.</macos>
         </platform_drivers>
         <iot_drivers>
-            <bluetooth5>BleDriver simulating Bluetooth 5 advertising, MTU negotiations (23 to 512 bytes), BLE 2M PHY, and L2CAP Connection-Oriented Channels (CoC).</bluetooth5>
-            <wifi>WifiDriver simulating low-overhead TCP/UDP socket connections supporting socket-level configuration options like TCP_NODELAY.</wifi>
+            <bluetooth5>BleDriver advertising MTU negotiations (23 to 512 bytes), BLE 2M PHY, and L2CAP Connection-Oriented Channels (CoC).</bluetooth5>
+            <wifi>WifiDriver supporting live TCP/UDP socket connections supporting socket-level configuration options like TCP_NODELAY.</wifi>
         </iot_drivers>
     </driver_and_transport_specifications>
 

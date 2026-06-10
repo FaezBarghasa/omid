@@ -49,6 +49,9 @@ pub use driver::{OmidDriver, MockHardwareDriver, LinuxDriver, WindowsDriver, Mac
 mod tests {
     use super::*;
     use crate::event::EventType;
+    use crate::queue::SpscRingBuffer;
+    #[cfg(feature = "std")]
+    use std::sync::Arc;
 
     #[test]
     fn test_packet_f32_roundtrip() {
@@ -365,7 +368,7 @@ mod tests {
         std::thread::sleep(std::time::Duration::from_millis(50));
 
         assert!(called.load(Ordering::Relaxed));
-        assert!(dispatcher.last_rtt_micros() >= 0);
+        let _rtt = dispatcher.last_rtt_micros();
         
         dispatcher.shutdown();
     }
