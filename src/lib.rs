@@ -289,4 +289,84 @@ mod tests {
         let p = OmidPacket::new_adc12(2, EventType::AbsoluteChange, flags, 2000);
         assert_eq!(driver.submit_control(p), Err(OmidError::NotConnected));
     }
+
+    #[test]
+    fn test_ring_buffer_push_pop_many() {
+        let q = SpscRingBuffer::<i32, 16>::new();
+        let items = [1, 2, 3, 4, 5];
+        assert_eq!(q.push_many(&items), 5);
+
+        let mut dest = [0i32; 8];
+        assert_eq!(q.pop_many(&mut dest), 5);
+        assert_eq!(&dest[..5], &items);
+    }
+
+    #[test]
+    fn test_midi_translation() {
+        let midi_msg = [0x92, 0x3C, 0x64]; // Note On, Channel 2, Note 60, Velocity 100
+        let packet = Midi1Translator::to_omid(&midi_msg).unwrap();
+        assert_eq!(packet.event(), EventType::KeyPress);
+        assert_eq!(packet.object_id, (2 << 8) | 60);
+        assert!((packet.payload_as_f32() - (100.0 / 127.0)).abs() < 1e-6);
+
+        let mut out_msg = [0u8; 3];
+        assert_eq!(Midi1Translator::to_midi1(packet, &mut out_msg).unwrap(), 3);
+        assert_eq!(out_msg[0], 0x92);
+        assert_eq!(out_msg[1], 60);
+        assert!((out_msg[2] as i32 - 100).abs() <= 1);
+    }
+
+    #[test]
+    fn test_midi2_ump_translation() {
+        let packet = OmidPacket::new_f32(0x1234, EventType::AbsoluteChange, OmidFlags(0), 0.5);
+        let ump = Midi2UmpTranslator::pack_to_sysex8(packet, 1, 0xAA);
+        let unpacked = Midi2UmpTranslator::unpack_from_sysex8(ump).unwrap();
+        assert_eq!(unpacked.object_id, 0x1234);
+        assert_eq!(unpacked.event(), EventType::AbsoluteChange);
+        assert_eq!(unpacked.payload_as_f32(), 0.5);
+    }
+
+    #[test]
+    #[cfg(feature = "std")]
+    fn test_osc_encoding() {
+        let packet = OmidPacket::new_f32(12, EventType::AbsoluteChange, OmidFlags(0), 0.75);
+        let mut buf = [0u8; 32];
+        let size = OmidHostDispatcher::map_to_osc(packet, &mut buf).unwrap();
+        assert_eq!(size, 20); // "/omid/12\0" (12 bytes) + ",f\0\0" (4 bytes) + float (4 bytes)
+        assert_eq!(&buf[..9], b"/omid/12\0");
+    }
+
+    #[test]
+    #[cfg(feature = "std")]
+    fn test_dispatcher_callbacks_and_latency() {
+        use std::sync::atomic::Ordering;
+        let stats = Arc::new(DispatcherStats::default());
+        let q0 = Arc::new(SpscRingBuffer::new());
+        let queues = std::vec![q0.clone()];
+        let tx_queue = Arc::new(SpscRingBuffer::new());
+
+        let dispatcher = OmidHostDispatcher::new(1, queues.clone(), tx_queue.clone(), stats.clone());
+        
+        let called = Arc::new(core::sync::atomic::AtomicBool::new(false));
+        let called_clone = Arc::clone(&called);
+        dispatcher.register_callback(42, move |packet| {
+            assert_eq!(packet.object_id, 42);
+            called_clone.store(true, Ordering::Relaxed);
+        });
+
+        let flags = OmidFlags::new(false, false, false, 0);
+        let p = OmidPacket::new_f32(42, EventType::AbsoluteChange, flags, 0.5);
+        dispatcher.submit_to_device_with_timestamp(p).unwrap();
+
+        // Dispatch it back to simulate the device response
+        dispatcher.dispatch(p, &queues).unwrap();
+
+        // Wait for worker processing
+        std::thread::sleep(std::time::Duration::from_millis(50));
+
+        assert!(called.load(Ordering::Relaxed));
+        assert!(dispatcher.last_rtt_micros() >= 0);
+        
+        dispatcher.shutdown();
+    }
 }

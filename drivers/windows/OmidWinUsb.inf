@@ -1,0 +1,65 @@
+; OMID WinUSB Installation File
+;
+; Enables direct bulk/isochronous access via WinUSB API on Windows.
+
+[Version]
+Signature   = "$Windows NT$"
+Class       = USBDevice
+ClassGUID   = {88BAE032-5A81-49f0-BC3D-A4FF138216D6}
+Provider    = %ProviderName%
+CatalogFile = OmidWinUsb.cat
+DriverVer   = 06/10/2026,2.0.0.0
+
+[Manufacturer]
+%ManufacturerName% = OmidDevices,NTamd64
+
+[OmidDevices.NTamd64]
+%DeviceName% = USB_Install, USB\VID_1D6B&PID_0104
+
+[USB_Install]
+Include = winusb.inf
+Needs   = WINUSB.NT
+
+[USB_Install.Services]
+Include = winusb.inf
+Needs   = WINUSB.NT.Services
+
+[USB_Install.Wdf]
+KmdfService = WINUSB, WinUsb_Install
+
+[WinUsb_Install]
+KmdfLibraryVersion = 1.11
+
+[USB_Install.HW]
+AddReg = Dev_AddReg
+
+[Dev_AddReg]
+; WinUSB Device Interface GUID
+HKR,,DeviceInterfaceGUIDs,0x10000,"{B500C5E8-89E3-40D9-9238-D0F341A87783}"
+
+[USB_Install.CoInstallers]
+AddReg    = CoInstallers_AddReg
+CopyFiles = CoInstallers_CopyFiles
+
+[CoInstallers_AddReg]
+HKR,,CoInstallers32,0x00010000,"WdfCoInstaller01011.dll,WdfCoInstaller","WinUsbCoInstaller2.dll"
+
+[CoInstallers_CopyFiles]
+WdfCoInstaller01011.dll
+WinUsbCoInstaller2.dll
+
+[DestinationDirs]
+CoInstallers_CopyFiles = 11
+
+[SourceDisksNames]
+1 = %DiskName%,,,
+
+[SourceDisksFiles]
+WdfCoInstaller01011.dll = 1
+WinUsbCoInstaller2.dll  = 1
+
+[Strings]
+ProviderName     = "Omid Consortium"
+ManufacturerName = "Omid Devices"
+DeviceName       = "OMID Unified Control Interface"
+DiskName         = "OMID Driver Installation Disk"
