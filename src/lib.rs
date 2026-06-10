@@ -11,6 +11,8 @@ pub mod uact;
 
 #[cfg(feature = "std")]
 pub mod dispatcher;
+#[cfg(feature = "std")]
+pub mod driver;
 
 // Re-export core types for convenience
 pub use event::{OmidEventType, OmidFlags, ForceProfile};
@@ -20,6 +22,8 @@ pub use uact::{UactFrame, UactDemuxer, ClockSynchronizer};
 
 #[cfg(feature = "std")]
 pub use dispatcher::{OmidHostDispatcher, DispatcherStats};
+#[cfg(feature = "std")]
+pub use driver::{OmidDriver, MockHardwareDriver, LinuxDriver, WindowsDriver, MacosDriver};
 
 
 #[cfg(test)]
