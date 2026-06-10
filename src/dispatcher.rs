@@ -1,8 +1,11 @@
 use std::prelude::v1::*;
 use std::format;
-use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicUsize, AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::RwLock;
+use std::collections::HashMap;
 use std::thread::{self, JoinHandle};
+use std::time::Instant;
 use crate::packet::OmidPacket;
 use crate::queue::SpscRingBuffer;
 use crate::error::OmidError;
@@ -70,23 +73,22 @@ pub struct DispatcherStats {
     pub haptic_feedbacks: AtomicUsize,
 }
 
-/// Global Parallel Dispatcher Engine supporting bidirectional transmission.
-///
-/// Spawns worker threads pinned to specific CPU cores and routes incoming control packets
-/// to their respective queues using voice ID routing.
-/// Outbound visual updates and motorized fader sync packets are sent back to the device
-/// via a lock-free transmission queue.
+/// Type definition for registered DSP callbacks.
+pub type OmidCallback = Box<dyn Fn(OmidPacket) + Send + Sync + 'static>;
+
+/// Global Parallel Dispatcher Engine supporting bidirectional transmission, registered callbacks, and latency hooks.
 pub struct OmidHostDispatcher {
     running: Arc<AtomicBool>,
     threads: Vec<JoinHandle<()>>,
     stats: Arc<DispatcherStats>,
     tx_queue: Arc<SpscRingBuffer<OmidPacket, 4096>>,
+    callbacks: Arc<RwLock<HashMap<u16, OmidCallback>>>,
+    sent_timestamps: Arc<RwLock<HashMap<u16, Instant>>>,
+    last_rtt_us: Arc<AtomicU64>,
 }
 
 impl OmidHostDispatcher {
     /// Instantiates the parallel dispatch loop.
-    ///
-    /// Spawns parallel worker pools dedicated to processing discrete regions of the keyboard.
     pub fn new(
         worker_count: usize,
         rx_queues: Vec<Arc<SpscRingBuffer<OmidPacket, 4096>>>,
@@ -95,23 +97,36 @@ impl OmidHostDispatcher {
     ) -> Self {
         let running = Arc::new(AtomicBool::new(true));
         let mut threads = Vec::new();
+        let callbacks = Arc::new(RwLock::new(HashMap::new()));
+        let sent_timestamps = Arc::new(RwLock::new(HashMap::new()));
+        let last_rtt_us = Arc::new(AtomicU64::new(0));
 
         for (thread_idx, queue_ref) in rx_queues.iter().enumerate().take(worker_count) {
             let is_running = Arc::clone(&running);
             let queue = Arc::clone(queue_ref);
             let thread_stats = Arc::clone(&stats);
             let thread_tx = Arc::clone(&tx_queue);
+            let thread_callbacks = Arc::clone(&callbacks);
+            let thread_timestamps = Arc::clone(&sent_timestamps);
+            let thread_rtt = Arc::clone(&last_rtt_us);
 
             let handle = thread::Builder::new()
                 .name(format!("OMID-Worker-{}", thread_idx))
                 .spawn(move || {
-                    // Pin to CPU core. Workers start at core 2 (leaving 0 and 1 for OS & receiver)
                     let _ = affinity::pin_current_thread_to_cpu(thread_idx + 2);
 
                     let mut spins = 0;
                     while is_running.load(Ordering::Relaxed) {
                         if let Some(packet) = queue.pop() {
-                            Self::process_packet_on_dsp(packet, thread_idx, &thread_stats, &thread_tx);
+                            Self::process_packet_on_dsp(
+                                packet,
+                                thread_idx,
+                                &thread_stats,
+                                &thread_tx,
+                                &thread_callbacks,
+                                &thread_timestamps,
+                                &thread_rtt,
+                            );
                             spins = 0;
                         } else {
                             spins += 1;
@@ -137,7 +152,54 @@ impl OmidHostDispatcher {
             threads,
             stats,
             tx_queue,
+            callbacks,
+            sent_timestamps,
+            last_rtt_us,
         }
+    }
+
+    /// Registers a handler callback for a specific object ID.
+    pub fn register_callback<F>(&self, object_id: u16, handler: F)
+    where
+        F: Fn(OmidPacket) + Send + Sync + 'static,
+    {
+        if let Ok(mut guard) = self.callbacks.write() {
+            guard.insert(object_id, Box::new(handler));
+        }
+    }
+
+    /// Maps an `OmidPacket` to a standard Open Sound Control (OSC) message byte buffer.
+    ///
+    /// Padded according to OSC spec (aligned to 4-byte boundaries).
+    ///
+    /// # Errors
+    ///
+    /// Returns `OmidError::BufferTooSmall` if the destination buffer is not large enough.
+    pub fn map_to_osc(packet: OmidPacket, out_buf: &mut [u8]) -> Result<usize, OmidError> {
+        let path = std::format!("/omid/{}\0", packet.object_id);
+        let path_len = path.len();
+        let padded_path_len = (path_len + 3) & !3; // align to 4 bytes
+
+        let type_tag = ",f\0\0";
+        let total_len = padded_path_len + 4 + 4; // path + tag + float
+
+        if out_buf.len() < total_len {
+            return Err(OmidError::BufferTooSmall);
+        }
+
+        out_buf[..total_len].fill(0);
+        out_buf[..path_len].copy_from_slice(path.as_bytes());
+        out_buf[padded_path_len..padded_path_len + 4].copy_from_slice(type_tag.as_bytes());
+
+        let val = if packet.is_raw_data() {
+            packet.payload_as_normalized_f32(12)
+        } else {
+            packet.payload_as_f32()
+        };
+        let val_bytes = val.to_be_bytes();
+        out_buf[padded_path_len + 4..padded_path_len + 8].copy_from_slice(&val_bytes);
+
+        Ok(total_len)
     }
 
     /// Dispatch a packet to the appropriate queue using Voice ID routing:
@@ -161,7 +223,7 @@ impl OmidHostDispatcher {
         queues[thread_idx].push(packet)
     }
 
-    /// Submits an outbound control packet directly to the transmission queue (e.g. from DAW GUI or automation).
+    /// Submits an outbound control packet directly to the transmission queue.
     ///
     /// # Errors
     ///
@@ -169,6 +231,24 @@ impl OmidHostDispatcher {
     #[inline]
     pub fn submit_to_device(&self, packet: OmidPacket) -> Result<(), OmidError> {
         self.tx_queue.push(packet)
+    }
+
+    /// Submits an outbound control packet and records the timestamp to track latency.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err(OmidError::QueueOverflow)` if the transmission queue is full.
+    pub fn submit_to_device_with_timestamp(&self, packet: OmidPacket) -> Result<(), OmidError> {
+        if let Ok(mut guard) = self.sent_timestamps.write() {
+            guard.insert(packet.object_id, Instant::now());
+        }
+        self.submit_to_device(packet)
+    }
+
+    /// Returns the last measured round-trip time (RTT) latency in microseconds.
+    #[inline]
+    pub fn last_rtt_micros(&self) -> u64 {
+        self.last_rtt_us.load(Ordering::Relaxed)
     }
 
     /// Returns a reference to the outbound transmission queue.
@@ -183,15 +263,31 @@ impl OmidHostDispatcher {
         _worker_id: usize,
         stats: &DispatcherStats,
         tx_queue: &Arc<SpscRingBuffer<OmidPacket, 4096>>,
+        callbacks: &RwLock<HashMap<u16, OmidCallback>>,
+        sent_timestamps: &RwLock<HashMap<u16, Instant>>,
+        last_rtt_us: &AtomicU64,
     ) {
+        // Measure latency if this was a response/echo from the device
+        if let Ok(mut guard) = sent_timestamps.write() {
+            if let Some(sent_time) = guard.remove(&packet.object_id) {
+                let rtt = sent_time.elapsed().as_micros() as u64;
+                last_rtt_us.store(rtt, Ordering::Relaxed);
+            }
+        }
+
+        // Execute user DSP callback if registered
+        if let Ok(guard) = callbacks.read() {
+            if let Some(cb) = guard.get(&packet.object_id) {
+                cb(packet);
+            }
+        }
+
         let event_type = packet.event();
         match event_type {
             crate::event::EventType::KeyPress => {
                 stats.key_presses.fetch_add(1, Ordering::Relaxed);
-                
-                // Emulated low-jitter voice-trigger logic
                 let _val = if packet.is_raw_data() {
-                    packet.payload_as_normalized_f32(16) // 16-bit key
+                    packet.payload_as_normalized_f32(16)
                 } else {
                     packet.payload_as_f32()
                 };
@@ -203,7 +299,7 @@ impl OmidHostDispatcher {
                     packet.object_id,
                     crate::event::EventType::VisualUpdate,
                     feedback_flags,
-                    0xFF00FF00, // Green LED color value
+                    0xFF00FF00, // Green LED
                 );
                 let _ = tx_queue.push(feedback_packet);
             }
@@ -217,15 +313,14 @@ impl OmidHostDispatcher {
                     packet.object_id,
                     crate::event::EventType::VisualUpdate,
                     feedback_flags,
-                    0x00000000, // Turn Off LED
+                    0x00000000,
                 );
                 let _ = tx_queue.push(feedback_packet);
             }
             crate::event::EventType::AbsoluteChange => {
                 stats.absolute_changes.fetch_add(1, Ordering::Relaxed);
-                
                 let val = if packet.is_raw_data() {
-                    packet.payload_as_normalized_f32(12) // 12-bit fader
+                    packet.payload_as_normalized_f32(12)
                 } else {
                     packet.payload_as_f32()
                 };

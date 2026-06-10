@@ -1,5 +1,3 @@
-#![cfg(feature = "std")]
-
 use std::prelude::v1::*;
 use std::sync::Arc;
 use std::sync::Mutex;

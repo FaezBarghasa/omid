@@ -22,6 +22,8 @@ pub mod uact;
 pub mod ffi;
 /// Structured library error types.
 pub mod error;
+/// MIDI 1.0 and 2.0 conversion utilities.
+pub mod midi;
 
 /// Dispatcher loop and thread pinning tools.
 #[cfg(feature = "std")]
@@ -36,6 +38,7 @@ pub use packet::OmidPacket;
 pub use topology::TopologyDescriptor;
 pub use uact::{UactFrame, UactDemuxer, ClockSynchronizer};
 pub use error::OmidError;
+pub use midi::{Midi1Translator, Midi2UmpTranslator};
 
 #[cfg(feature = "std")]
 pub use dispatcher::{OmidHostDispatcher, DispatcherStats};

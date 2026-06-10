@@ -2,37 +2,63 @@ use core::cell::UnsafeCell;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use crate::error::OmidError;
 
+#[repr(align(64))]
+struct CacheLineIndex {
+    idx: AtomicUsize,
+}
+
+impl CacheLineIndex {
+    #[inline]
+    fn new(val: usize) -> Self {
+        Self {
+            idx: AtomicUsize::new(val),
+        }
+    }
+
+    #[inline]
+    fn load(&self, order: Ordering) -> usize {
+        self.idx.load(order)
+    }
+
+    #[inline]
+    fn store(&self, val: usize, order: Ordering) {
+        self.idx.store(val, order);
+    }
+}
+
 /// A high-performance, lock-free SPSC (Single Producer Single Consumer) Ring Buffer
 /// tailored for real-time DSP pipelines.
 ///
-/// Under `N` capacity, it allows non-blocking push/pop operations between a single writer
-/// and a single reader thread.
+/// Features cache-aligned index fields to prevent false sharing and mask-based indexing.
+/// The capacity `N` MUST be a power of two.
 pub struct SpscRingBuffer<T: Copy, const N: usize> {
     buffer: UnsafeCell<[Option<T>; N]>,
-    write_idx: AtomicUsize,
-    read_idx: AtomicUsize,
+    write_idx: CacheLineIndex,
+    read_idx: CacheLineIndex,
 }
 
 // Manually implement Send and Sync because UnsafeCell is !Sync by default.
-// The SPSC invariants guarantee that push (writer) and pop (reader)
-// do not access the same memory location concurrently.
 unsafe impl<T: Copy + Send, const N: usize> Send for SpscRingBuffer<T, N> {}
 unsafe impl<T: Copy + Send, const N: usize> Sync for SpscRingBuffer<T, N> {}
 
 impl<T: Copy, const N: usize> SpscRingBuffer<T, N> {
+    // Compile-time check ensuring the capacity is a power of two.
+    const _CHECK_POWER_OF_TWO: () = {
+        assert!(N > 0 && (N & (N - 1)) == 0, "SpscRingBuffer capacity N must be a power of two");
+    };
+
     /// Creates a new, empty `SpscRingBuffer`.
     #[inline]
     pub fn new() -> Self {
+        let _ = Self::_CHECK_POWER_OF_TWO;
         Self {
             buffer: UnsafeCell::new([None; N]),
-            write_idx: AtomicUsize::new(0),
-            read_idx: AtomicUsize::new(0),
+            write_idx: CacheLineIndex::new(0),
+            read_idx: CacheLineIndex::new(0),
         }
     }
 
     /// Enqueues an item into the ring buffer. Non-blocking.
-    ///
-    /// Takes a shared reference `&self` to allow thread sharing (e.g. via `Arc`).
     ///
     /// # Errors
     ///
@@ -41,6 +67,7 @@ impl<T: Copy, const N: usize> SpscRingBuffer<T, N> {
     pub fn push(&self, item: T) -> Result<(), OmidError> {
         let current_write = self.write_idx.load(Ordering::Relaxed);
         let current_read = self.read_idx.load(Ordering::Acquire);
+        let mask = N - 1;
 
         if current_write.wrapping_sub(current_read) == N {
             return Err(OmidError::QueueOverflow);
@@ -48,15 +75,39 @@ impl<T: Copy, const N: usize> SpscRingBuffer<T, N> {
 
         unsafe {
             let buffer_ptr = self.buffer.get();
-            (*buffer_ptr)[current_write % N] = Some(item);
+            (*buffer_ptr)[current_write & mask] = Some(item);
         }
         self.write_idx.store(current_write.wrapping_add(1), Ordering::Release);
         Ok(())
     }
 
-    /// Enqueues an item into the ring buffer using a mutable reference.
+    /// Enqueues multiple items into the ring buffer. Non-blocking.
     ///
-    /// Provided for API compatibility with single-threaded mutable usage.
+    /// Returns the number of items successfully enqueued.
+    #[inline]
+    pub fn push_many(&self, items: &[T]) -> usize {
+        let current_write = self.write_idx.load(Ordering::Relaxed);
+        let current_read = self.read_idx.load(Ordering::Acquire);
+        let mask = N - 1;
+
+        let available = N - (current_write.wrapping_sub(current_read));
+        let count = core::cmp::min(items.len(), available);
+        if count == 0 {
+            return 0;
+        }
+
+        unsafe {
+            let buffer_ptr = self.buffer.get();
+            for i in 0..count {
+                (*buffer_ptr)[(current_write + i) & mask] = Some(items[i]);
+            }
+        }
+
+        self.write_idx.store(current_write.wrapping_add(count), Ordering::Release);
+        count
+    }
+
+    /// Enqueues an item into the ring buffer using a mutable reference.
     ///
     /// # Errors
     ///
@@ -73,6 +124,7 @@ impl<T: Copy, const N: usize> SpscRingBuffer<T, N> {
     pub fn pop(&self) -> Option<T> {
         let current_read = self.read_idx.load(Ordering::Relaxed);
         let current_write = self.write_idx.load(Ordering::Acquire);
+        let mask = N - 1;
 
         if current_read == current_write {
             return None; // Buffer is empty
@@ -80,10 +132,38 @@ impl<T: Copy, const N: usize> SpscRingBuffer<T, N> {
 
         let item = unsafe {
             let buffer_ptr = self.buffer.get();
-            (*buffer_ptr)[current_read % N]
+            (*buffer_ptr)[current_read & mask]
         };
         self.read_idx.store(current_read.wrapping_add(1), Ordering::Release);
         item
+    }
+
+    /// Dequeues multiple items from the ring buffer. Non-blocking.
+    ///
+    /// Returns the number of items successfully dequeued.
+    #[inline]
+    pub fn pop_many(&self, dest: &mut [T]) -> usize {
+        let current_read = self.read_idx.load(Ordering::Relaxed);
+        let current_write = self.write_idx.load(Ordering::Acquire);
+        let mask = N - 1;
+
+        let available = current_write.wrapping_sub(current_read);
+        let count = core::cmp::min(dest.len(), available);
+        if count == 0 {
+            return 0;
+        }
+
+        unsafe {
+            let buffer_ptr = self.buffer.get();
+            for i in 0..count {
+                if let Some(item) = (*buffer_ptr)[(current_read + i) & mask] {
+                    dest[i] = item;
+                }
+            }
+        }
+
+        self.read_idx.store(current_read.wrapping_add(count), Ordering::Release);
+        count
     }
 }
 

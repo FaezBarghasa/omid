@@ -6,11 +6,12 @@ description = "Omid (Object-MIDI) Protocol no_std core library"
 license = "MIT OR Apache-2.0"
 
 [dependencies]
-# No dependencies for the core parsing library
+midir = { version = "0.9.1", optional = true }
 
 [features]
 default = ["std"]
 std = []
+bridge = ["std", "dep:midir"]
 
 [lib]
 name = "omid"
@@ -32,4 +33,3 @@ assets = [
     ["bindings/cpp/omid.hpp", "/usr/include/omid.hpp", "644"],
     ["LICENSE-MIT", "/usr/share/doc/libomid/copyright", "644"]
 ]
-
