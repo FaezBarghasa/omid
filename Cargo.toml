@@ -1,0 +1,13 @@
+[package]
+name = "omid"
+version = "0.1.0"
+edition = "2024"
+description = "Omid (Object-MIDI) Protocol no_std core library"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+# No dependencies for the core parsing library
+
+[lib]
+name = "omid"
+path = "src/lib.rs"
