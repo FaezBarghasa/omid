@@ -7,6 +7,7 @@ use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 use crate::packet::OmidPacket;
 use crate::queue::SpscRingBuffer;
+use crate::error::OmidError;
 
 #[cfg(target_os = "linux")]
 mod affinity {
@@ -60,13 +61,20 @@ mod affinity {
 /// Thread-safe statistics tracking for the dispatcher.
 #[derive(Debug, Default)]
 pub struct DispatcherStats {
+    /// Count of KeyPress events processed.
     pub key_presses: AtomicUsize,
+    /// Count of KeyRelease events processed.
     pub key_releases: AtomicUsize,
+    /// Count of AbsoluteChange (fader) events processed.
     pub absolute_changes: AtomicUsize,
+    /// Count of HapticFeedback events processed.
     pub haptic_feedbacks: AtomicUsize,
 }
 
-/// Global Parallel Dispatcher Engine
+/// Global Parallel Dispatcher Engine.
+///
+/// Spawns worker threads pinned to specific CPU cores and routes incoming control packets
+/// to their respective queues using voice ID routing.
 pub struct OmidHostDispatcher {
     running: Arc<AtomicBool>,
     threads: Vec<JoinHandle<()>>,
@@ -75,6 +83,7 @@ pub struct OmidHostDispatcher {
 
 impl OmidHostDispatcher {
     /// Instantiates the parallel dispatch loop.
+    ///
     /// Spawns parallel worker pools dedicated to processing discrete regions of the keyboard.
     pub fn new(
         worker_count: usize,
@@ -123,16 +132,21 @@ impl OmidHostDispatcher {
     }
 
     /// Dispatch a packet to the appropriate queue using Voice ID routing:
-    /// Voice ID = Object ID % Thread Count
+    /// `Voice ID = Object ID % Thread Count`
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err(OmidError::NoWorkerQueues)` if `queues` is empty.
+    /// Returns `Err(OmidError::QueueOverflow)` if the routed queue is saturated.
     #[inline(always)]
     pub fn dispatch(
         &self,
         packet: OmidPacket,
         queues: &[Arc<SpscRingBuffer<OmidPacket, 4096>>],
-    ) -> Result<(), &'static str> {
+    ) -> Result<(), OmidError> {
         let worker_count = queues.len();
         if worker_count == 0 {
-            return Err("No worker queues available");
+            return Err(OmidError::NoWorkerQueues);
         }
         let thread_idx = (packet.object_id as usize) % worker_count;
         queues[thread_idx].push(packet)
@@ -177,6 +191,7 @@ impl OmidHostDispatcher {
     }
 
     /// Retrieve references to the statistics tracker.
+    #[inline]
     pub fn stats(&self) -> &DispatcherStats {
         &self.stats
     }
