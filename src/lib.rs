@@ -132,8 +132,9 @@ mod tests {
         let q0 = Arc::new(SpscRingBuffer::new());
         let q1 = Arc::new(SpscRingBuffer::new());
         let queues = std::vec![q0.clone(), q1.clone()];
+        let tx_queue = Arc::new(SpscRingBuffer::new());
 
-        let dispatcher = OmidHostDispatcher::new(2, queues.clone(), stats.clone());
+        let dispatcher = OmidHostDispatcher::new(2, queues.clone(), tx_queue.clone(), stats.clone());
 
         // Dispatch a KeyPress on object_id 0 (should route to q0: 0 % 2 == 0)
         let flags = OmidFlags::new(false, false, false, 0);
@@ -149,6 +150,15 @@ mod tests {
 
         assert_eq!(stats.key_presses.load(Ordering::Relaxed), 1);
         assert_eq!(stats.key_releases.load(Ordering::Relaxed), 1);
+
+        // Verify bidirectional VisualUpdate confirmation was sent to the tx_queue
+        let feedback1 = tx_queue.pop().unwrap();
+        assert_eq!(feedback1.event(), EventType::VisualUpdate);
+        assert_eq!(feedback1.object_id, 0);
+
+        let feedback2 = tx_queue.pop().unwrap();
+        assert_eq!(feedback2.event(), EventType::VisualUpdate);
+        assert_eq!(feedback2.object_id, 1);
 
         dispatcher.shutdown();
     }
@@ -200,10 +210,14 @@ mod tests {
         let hardware = MockHardwareDriver::new();
         let driver = LinuxDriver::new(hardware);
 
-        // Test submission and polling of control packets
+        // Test submission of control packets (should route to ep1_out)
         let flags = OmidFlags::new(false, false, false, 0);
         let p = OmidPacket::new_adc12(5, EventType::AbsoluteChange, flags, 4000);
         driver.submit_control(p).unwrap();
+        assert_eq!(driver.hardware.ep1_out.pop().unwrap().payload_as_adc12(), 4000);
+
+        // Test polling of control packets (should pop from ep1_in)
+        driver.hardware.ep1_in.push(p).unwrap();
         let polled = driver.poll_control().unwrap();
         assert_eq!(polled.object_id, 5);
         assert_eq!(polled.payload_as_adc12(), 4000);
@@ -216,11 +230,12 @@ mod tests {
         // Test high-throughput control queue saturation (capacity is 4096)
         for i in 0..4096 {
             let p_i = OmidPacket::new_adc12(i as u16, EventType::AbsoluteChange, flags, i as u16);
-            driver.submit_control(p_i).unwrap();
+            // Push directly to ep1_in to test saturation
+            driver.hardware.ep1_in.push(p_i).unwrap();
         }
         // Next push should fail due to saturation/overflow
         let p_overflow = OmidPacket::new_adc12(9999, EventType::AbsoluteChange, flags, 0);
-        let res = driver.submit_control(p_overflow);
+        let res = driver.hardware.ep1_in.push(p_overflow);
         assert!(res.is_err());
         assert_eq!(res.unwrap_err(), OmidError::QueueOverflow);
     }
@@ -245,7 +260,7 @@ mod tests {
         driver.connect();
         assert!(driver.is_connected());
         driver.submit_control(p).unwrap();
-        assert_eq!(driver.poll_control().unwrap().payload_as_adc16(), 1000);
+        assert_eq!(driver.hardware.ep1_out.pop().unwrap().payload_as_adc16(), 1000);
 
         // MTU negotiations
         assert_eq!(driver.negotiate_mtu(600), 512); // Clamped at 512

@@ -154,85 +154,193 @@ typedef struct cpu_set_t {
  */
 #define EventType_RelativeChange RelativeDelta
 
+/**
+ * Creates a new `OmidPacket` with raw fields.
+ */
 struct OmidPacket omid_packet_new(uint16_t object_id,
                                   uint8_t event_type,
                                   uint8_t flags,
                                   uint32_t payload);
 
+/**
+ * Creates a new `OmidPacket` carrying a 32-bit single-precision float.
+ */
 struct OmidPacket omid_packet_new_f32(uint16_t object_id,
                                       uint8_t event_type,
                                       uint8_t flags,
                                       float val);
 
+/**
+ * Creates a new `OmidPacket` carrying a 32-bit signed integer.
+ */
 struct OmidPacket omid_packet_new_i32(uint16_t object_id,
                                       uint8_t event_type,
                                       uint8_t flags,
                                       int32_t val);
 
+/**
+ * Creates a new `OmidPacket` carrying a 32-bit unsigned integer.
+ */
 struct OmidPacket omid_packet_new_u32(uint16_t object_id,
                                       uint8_t event_type,
                                       uint8_t flags,
                                       uint32_t val);
 
+/**
+ * Creates a new `OmidPacket` carrying two 16-bit coordinates (X and Y).
+ */
 struct OmidPacket omid_packet_new_xy(uint16_t object_id,
                                      uint8_t event_type,
                                      uint8_t flags,
                                      uint16_t x,
                                      uint16_t y);
 
+/**
+ * Creates a new `OmidPacket` representing haptic feedback.
+ */
 struct OmidPacket omid_packet_new_haptic(uint16_t object_id, uint8_t profile, float intensity);
 
+/**
+ * Creates a new `OmidPacket` carrying a 12-bit ADC value.
+ */
 struct OmidPacket omid_packet_new_adc12(uint16_t object_id,
                                         uint8_t event_type,
                                         uint8_t flags,
                                         uint16_t val);
 
+/**
+ * Creates a new `OmidPacket` carrying a 16-bit ADC value.
+ */
 struct OmidPacket omid_packet_new_adc16(uint16_t object_id,
                                         uint8_t event_type,
                                         uint8_t flags,
                                         uint16_t val);
 
+/**
+ * Deserializes a packet from a raw 8-byte array.
+ *
+ * # Safety
+ *
+ * The caller must ensure that the `bytes` pointer points to a valid, initialized block of at least 8 bytes
+ * of memory and is safe to read.
+ */
 struct OmidPacket omid_packet_from_bytes(const uint8_t *bytes);
 
-void omid_packet_to_bytes(struct OmidPacket packet, uint8_t *out_bytes);
+/**
+ * Serializes a packet into a raw 8-byte buffer.
+ *
+ * # Safety
+ *
+ * The caller must ensure that the `out_bytes` pointer points to a valid, writable block of at least 8 bytes
+ * of memory and is safe to write.
+ */
+void omid_packet_to_bytes(struct OmidPacket packet,
+                          uint8_t *out_bytes);
 
+/**
+ * Extracts the payload as a 32-bit float.
+ */
 float omid_packet_payload_as_f32(struct OmidPacket packet);
 
+/**
+ * Extracts the payload as a 32-bit signed integer.
+ */
 int32_t omid_packet_payload_as_i32(struct OmidPacket packet);
 
+/**
+ * Extracts the payload as a 32-bit unsigned integer.
+ */
 uint32_t omid_packet_payload_as_u32(struct OmidPacket packet);
 
+/**
+ * Extracts the XY coordinate payload from a packet.
+ *
+ * # Safety
+ *
+ * The caller must ensure that `out_x` and `out_y` are either null or point to valid, writable
+ * 16-bit memory locations.
+ */
 void omid_packet_payload_as_xy(struct OmidPacket packet, uint16_t *out_x, uint16_t *out_y);
 
+/**
+ * Extracts the 12-bit ADC value from the packet payload.
+ */
 uint16_t omid_packet_payload_as_adc12(struct OmidPacket packet);
 
+/**
+ * Extracts the 16-bit ADC value from the packet payload.
+ */
 uint16_t omid_packet_payload_as_adc16(struct OmidPacket packet);
 
+/**
+ * Normalizes raw ADC values based on resolution bits.
+ */
 float omid_packet_payload_as_normalized_f32(struct OmidPacket packet, uint8_t adc_bits);
 
+/**
+ * Returns the intensity payload for haptic events.
+ */
 float omid_packet_haptic_intensity(struct OmidPacket packet);
 
+/**
+ * Returns the force profile ID for haptic events, or -1 if invalid.
+ */
 int32_t omid_packet_haptic_force_profile(struct OmidPacket packet);
 
+/**
+ * Helper to construct a flags byte.
+ */
 uint8_t omid_flags_new(bool touched, bool raw_data, bool direction, uint8_t timer_delta);
 
+/**
+ * Helper to check the touched bit from raw flags.
+ */
 bool omid_flags_is_touched(uint8_t flags);
 
+/**
+ * Helper to check the raw data bit from raw flags.
+ */
 bool omid_flags_is_raw_data(uint8_t flags);
 
+/**
+ * Helper to check the direction bit from raw flags.
+ */
 bool omid_flags_direction(uint8_t flags);
 
+/**
+ * Helper to check the timer delta from raw flags.
+ */
 uint8_t omid_flags_timer_delta(uint8_t flags);
 
+/**
+ * Creates a new `TopologyDescriptor`.
+ */
 struct TopologyDescriptor omid_topology_new(uint16_t object_id,
                                             uint8_t object_type,
                                             uint16_t spatial_x,
                                             uint16_t spatial_y,
                                             uint8_t resolution);
 
+/**
+ * Deserializes a topology descriptor from a raw 8-byte array.
+ *
+ * # Safety
+ *
+ * The caller must ensure that the `bytes` pointer points to a valid, initialized block of at least 8 bytes
+ * of memory and is safe to read.
+ */
 struct TopologyDescriptor omid_topology_from_bytes(const uint8_t *bytes);
 
-void omid_topology_to_bytes(struct TopologyDescriptor desc, uint8_t *out_bytes);
+/**
+ * Serializes a topology descriptor into a raw 8-byte buffer.
+ *
+ * # Safety
+ *
+ * The caller must ensure that the `out_bytes` pointer points to a valid, writable block of at least 8 bytes
+ * of memory and is safe to write.
+ */
+void omid_topology_to_bytes(struct TopologyDescriptor desc,
+                            uint8_t *out_bytes);
 
 extern libc_pthread_t pthread_self(void);
 

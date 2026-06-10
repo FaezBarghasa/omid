@@ -1,5 +1,3 @@
-#![cfg(feature = "std")]
-
 use std::prelude::v1::*;
 use std::format;
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -8,6 +6,7 @@ use std::thread::{self, JoinHandle};
 use crate::packet::OmidPacket;
 use crate::queue::SpscRingBuffer;
 use crate::error::OmidError;
+use crate::event::OmidFlags;
 
 #[cfg(target_os = "linux")]
 mod affinity {
@@ -71,14 +70,17 @@ pub struct DispatcherStats {
     pub haptic_feedbacks: AtomicUsize,
 }
 
-/// Global Parallel Dispatcher Engine.
+/// Global Parallel Dispatcher Engine supporting bidirectional transmission.
 ///
 /// Spawns worker threads pinned to specific CPU cores and routes incoming control packets
 /// to their respective queues using voice ID routing.
+/// Outbound visual updates and motorized fader sync packets are sent back to the device
+/// via a lock-free transmission queue.
 pub struct OmidHostDispatcher {
     running: Arc<AtomicBool>,
     threads: Vec<JoinHandle<()>>,
     stats: Arc<DispatcherStats>,
+    tx_queue: Arc<SpscRingBuffer<OmidPacket, 4096>>,
 }
 
 impl OmidHostDispatcher {
@@ -88,15 +90,17 @@ impl OmidHostDispatcher {
     pub fn new(
         worker_count: usize,
         rx_queues: Vec<Arc<SpscRingBuffer<OmidPacket, 4096>>>,
+        tx_queue: Arc<SpscRingBuffer<OmidPacket, 4096>>,
         stats: Arc<DispatcherStats>,
     ) -> Self {
         let running = Arc::new(AtomicBool::new(true));
         let mut threads = Vec::new();
 
-        for thread_idx in 0..worker_count {
+        for (thread_idx, queue_ref) in rx_queues.iter().enumerate().take(worker_count) {
             let is_running = Arc::clone(&running);
-            let queue = Arc::clone(&rx_queues[thread_idx]);
+            let queue = Arc::clone(queue_ref);
             let thread_stats = Arc::clone(&stats);
+            let thread_tx = Arc::clone(&tx_queue);
 
             let handle = thread::Builder::new()
                 .name(format!("OMID-Worker-{}", thread_idx))
@@ -107,7 +111,7 @@ impl OmidHostDispatcher {
                     let mut spins = 0;
                     while is_running.load(Ordering::Relaxed) {
                         if let Some(packet) = queue.pop() {
-                            Self::process_packet_on_dsp(packet, thread_idx, &thread_stats);
+                            Self::process_packet_on_dsp(packet, thread_idx, &thread_stats, &thread_tx);
                             spins = 0;
                         } else {
                             spins += 1;
@@ -128,7 +132,12 @@ impl OmidHostDispatcher {
             threads.push(handle);
         }
 
-        Self { running, threads, stats }
+        Self {
+            running,
+            threads,
+            stats,
+            tx_queue,
+        }
     }
 
     /// Dispatch a packet to the appropriate queue using Voice ID routing:
@@ -152,8 +161,29 @@ impl OmidHostDispatcher {
         queues[thread_idx].push(packet)
     }
 
+    /// Submits an outbound control packet directly to the transmission queue (e.g. from DAW GUI or automation).
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err(OmidError::QueueOverflow)` if the transmission queue is full.
+    #[inline]
+    pub fn submit_to_device(&self, packet: OmidPacket) -> Result<(), OmidError> {
+        self.tx_queue.push(packet)
+    }
+
+    /// Returns a reference to the outbound transmission queue.
+    #[inline]
+    pub fn tx_queue(&self) -> &Arc<SpscRingBuffer<OmidPacket, 4096>> {
+        &self.tx_queue
+    }
+
     #[inline(always)]
-    fn process_packet_on_dsp(packet: OmidPacket, _worker_id: usize, stats: &DispatcherStats) {
+    fn process_packet_on_dsp(
+        packet: OmidPacket,
+        _worker_id: usize,
+        stats: &DispatcherStats,
+        tx_queue: &Arc<SpscRingBuffer<OmidPacket, 4096>>,
+    ) {
         let event_type = packet.event();
         match event_type {
             crate::event::EventType::KeyPress => {
@@ -166,20 +196,50 @@ impl OmidHostDispatcher {
                     packet.payload_as_f32()
                 };
                 let _offset = packet.subsample_offset();
+
+                // Echo VisualUpdate feedback back to the device to illuminate key LEDs
+                let feedback_flags = OmidFlags::new(packet.is_touched(), false, false, 0);
+                let feedback_packet = OmidPacket::new_u32(
+                    packet.object_id,
+                    crate::event::EventType::VisualUpdate,
+                    feedback_flags,
+                    0xFF00FF00, // Green LED color value
+                );
+                let _ = tx_queue.push(feedback_packet);
             }
             crate::event::EventType::KeyRelease => {
                 stats.key_releases.fetch_add(1, Ordering::Relaxed);
                 let _offset = packet.subsample_offset();
+
+                // Turn off key LED on release
+                let feedback_flags = OmidFlags::new(false, false, false, 0);
+                let feedback_packet = OmidPacket::new_u32(
+                    packet.object_id,
+                    crate::event::EventType::VisualUpdate,
+                    feedback_flags,
+                    0x00000000, // Turn Off LED
+                );
+                let _ = tx_queue.push(feedback_packet);
             }
             crate::event::EventType::AbsoluteChange => {
                 stats.absolute_changes.fetch_add(1, Ordering::Relaxed);
                 
-                let _val = if packet.is_raw_data() {
+                let val = if packet.is_raw_data() {
                     packet.payload_as_normalized_f32(12) // 12-bit fader
                 } else {
                     packet.payload_as_f32()
                 };
                 let _offset = packet.subsample_offset();
+
+                // Echo back fader position change to synchronize motorized faders on hardware
+                let feedback_flags = OmidFlags::new(packet.is_touched(), false, false, 0);
+                let feedback_packet = OmidPacket::new_f32(
+                    packet.object_id,
+                    crate::event::EventType::AbsoluteChange,
+                    feedback_flags,
+                    val,
+                );
+                let _ = tx_queue.push(feedback_packet);
             }
             crate::event::EventType::HapticFeedback => {
                 stats.haptic_feedbacks.fetch_add(1, Ordering::Relaxed);

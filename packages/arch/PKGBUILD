@@ -1,0 +1,26 @@
+# Maintainer: Omid Developers <developers@omid.org>
+pkgname=libomid
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Omid (Object-MIDI) Protocol core library"
+arch=('x86_64')
+url="https://github.com/FaezBarghasa/omid"
+license=('MIT' 'Apache')
+depends=('glibc')
+makedepends=('rust' 'cargo')
+provides=('libomid')
+conflicts=('libomid')
+
+build() {
+  cd "$srcdir/omid"
+  cargo build --release --all-features
+}
+
+package() {
+  cd "$srcdir/omid"
+  install -Dm755 target/release/libomid.so "$pkgdir/usr/lib/libomid.so"
+  install -Dm644 include/omid.h "$pkgdir/usr/include/omid.h"
+  install -Dm644 bindings/cpp/omid.hpp "$pkgdir/usr/include/omid.hpp"
+  install -Dm644 LICENSE-MIT "$pkgdir/usr/share/licenses/$pkgname/LICENSE-MIT"
+  install -Dm644 LICENSE-APACHE "$pkgdir/usr/share/licenses/$pkgname/LICENSE-APACHE"
+}

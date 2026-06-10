@@ -43,6 +43,8 @@ pub struct MockHardwareDriver {
     pub ep3_out: Arc<SpscRingBuffer<f32, 16384>>,
     /// Haptic feedback packet queue to the device.
     pub haptic_out: Arc<SpscRingBuffer<OmidPacket, 4096>>,
+    /// Bulk OUT endpoint for control data to the device.
+    pub ep1_out: Arc<SpscRingBuffer<OmidPacket, 4096>>,
 }
 
 impl MockHardwareDriver {
@@ -53,7 +55,13 @@ impl MockHardwareDriver {
             ep2_in: Arc::new(SpscRingBuffer::new()),
             ep3_out: Arc::new(SpscRingBuffer::new()),
             haptic_out: Arc::new(SpscRingBuffer::new()),
+            ep1_out: Arc::new(SpscRingBuffer::new()),
         }
+    }
+
+    /// Drains a control packet destined for the device (EP1 OUT).
+    pub fn poll_device_received_control(&self) -> Option<OmidPacket> {
+        self.ep1_out.pop()
     }
 }
 
@@ -68,7 +76,7 @@ impl OmidDriver for MockHardwareDriver {
         if packet.event() == crate::event::EventType::HapticFeedback {
             self.haptic_out.push(packet)
         } else {
-            self.ep1_in.push(packet)
+            self.ep1_out.push(packet)
         }
     }
 
@@ -299,7 +307,7 @@ impl BleDriver {
             hardware,
             connected: Arc::new(AtomicBool::new(false)),
             phy_2m,
-            mtu: if mtu > 512 { 512 } else if mtu < 23 { 23 } else { mtu },
+            mtu: mtu.clamp(23, 512),
             l2cap_coc,
         }
     }
@@ -326,7 +334,7 @@ impl BleDriver {
 
     /// Negotiates the GATT Attribute MTU size. Bluetooth 5 allows up to 512 bytes.
     pub fn negotiate_mtu(&mut self, target_mtu: u16) -> u16 {
-        self.mtu = if target_mtu > 512 { 512 } else if target_mtu < 23 { 23 } else { target_mtu };
+        self.mtu = target_mtu.clamp(23, 512);
         self.mtu
     }
 
@@ -510,18 +518,20 @@ impl OmidDriver for WifiDriver {
         if self.use_tcp {
             let mut guard = self.tcp_stream.lock().unwrap();
             if let Some(ref mut stream) = *guard {
-                if stream.read_exact(&mut buf).is_ok() {
+                let _ = stream.read_exact(&mut buf).map(|_| {
                     let pkt = OmidPacket::from_bytes(&buf);
                     let _ = self.hardware.submit_control(pkt);
-                }
+                });
             }
         } else {
             let guard = self.udp_socket.lock().unwrap();
             if let Some(ref socket) = *guard {
-                if let Ok(8) = socket.recv(&mut buf) {
-                    let pkt = OmidPacket::from_bytes(&buf);
-                    let _ = self.hardware.submit_control(pkt);
-                }
+                let _ = socket.recv(&mut buf).map(|n| {
+                    if n == 8 {
+                        let pkt = OmidPacket::from_bytes(&buf);
+                        let _ = self.hardware.submit_control(pkt);
+                    }
+                });
             }
         }
         self.hardware.poll_control()
@@ -559,18 +569,20 @@ impl OmidDriver for WifiDriver {
         if self.use_tcp {
             let mut guard = self.tcp_stream.lock().unwrap();
             if let Some(ref mut stream) = *guard {
-                if stream.read_exact(&mut buf).is_ok() {
+                let _ = stream.read_exact(&mut buf).map(|_| {
                     let val = f32::from_bits(u32::from_le_bytes(buf));
                     let _ = self.hardware.ep2_in.push(val);
-                }
+                });
             }
         } else {
             let guard = self.udp_socket.lock().unwrap();
             if let Some(ref socket) = *guard {
-                if let Ok(4) = socket.recv(&mut buf) {
-                    let val = f32::from_bits(u32::from_le_bytes(buf));
-                    let _ = self.hardware.ep2_in.push(val);
-                }
+                let _ = socket.recv(&mut buf).map(|n| {
+                    if n == 4 {
+                        let val = f32::from_bits(u32::from_le_bytes(buf));
+                        let _ = self.hardware.ep2_in.push(val);
+                    }
+                });
             }
         }
         self.hardware.poll_audio()

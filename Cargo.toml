@@ -19,3 +19,17 @@ crate-type = ["rlib", "cdylib"]
 
 [build-dependencies]
 cbindgen = "0.29.2"
+
+[package.metadata.deb]
+name = "libomid"
+maintainer = "Omid Developers <developers@omid.org>"
+license = "MIT OR Apache-2.0"
+section = "libs"
+priority = "optional"
+assets = [
+    ["target/release/libomid.so", "/usr/lib/libomid.so", "644"],
+    ["include/omid.h", "/usr/include/omid.h", "644"],
+    ["bindings/cpp/omid.hpp", "/usr/include/omid.hpp", "644"],
+    ["LICENSE-MIT", "/usr/share/doc/libomid/copyright", "644"]
+]
+
