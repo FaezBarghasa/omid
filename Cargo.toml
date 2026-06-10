@@ -8,6 +8,10 @@ license = "MIT OR Apache-2.0"
 [dependencies]
 # No dependencies for the core parsing library
 
+[features]
+default = ["std"]
+std = []
+
 [lib]
 name = "omid"
 path = "src/lib.rs"

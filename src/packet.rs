@@ -1,4 +1,4 @@
-use crate::event::{OmidEventType, OmidFlags};
+use crate::event::{EventType, OmidFlags};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(C, align(4))]
@@ -10,6 +10,10 @@ pub struct OmidPacket {
 }
 
 impl OmidPacket {
+    pub const FLAG_TOUCHED: u8 = OmidFlags::TOUCHED;
+    pub const FLAG_RAW_DATA: u8 = OmidFlags::RAW_DATA;
+    pub const FLAG_DIRECTION: u8 = OmidFlags::DIRECTION;
+
     /// Creates a new OmidPacket with raw fields.
     pub fn new(object_id: u16, event_type: u8, flags: u8, payload: u32) -> Self {
         Self {
@@ -47,9 +51,14 @@ impl OmidPacket {
         }
     }
 
-    /// Returns the typed event type, if valid.
-    pub fn typed_event_type(&self) -> Option<OmidEventType> {
-        OmidEventType::from_u8(self.event_type)
+    /// Returns the parsed event type.
+    pub fn event(&self) -> EventType {
+        EventType::from_u8(self.event_type).unwrap_or(EventType::Unknown)
+    }
+
+    /// Returns the typed event type, if valid (for backward compatibility).
+    pub fn typed_event_type(&self) -> Option<EventType> {
+        EventType::from_u8(self.event_type)
     }
 
     /// Returns the flags container for this packet.
@@ -57,19 +66,58 @@ impl OmidPacket {
         OmidFlags(self.flags)
     }
 
+    /// Checks if the event type is KeyPress (0x03).
+    #[inline(always)]
+    pub fn is_keypress(&self) -> bool {
+        self.event_type == 0x03
+    }
+
+    /// Checks if the touched flag is set.
+    #[inline(always)]
+    pub fn is_touched(&self) -> bool {
+        self.typed_flags().is_touched()
+    }
+
+    /// Checks if the raw data flag is set.
+    #[inline(always)]
+    pub fn is_raw_data(&self) -> bool {
+        self.typed_flags().is_raw_data()
+    }
+
+    /// Checks the direction flag.
+    #[inline(always)]
+    pub fn direction(&self) -> bool {
+        self.typed_flags().direction()
+    }
+
+    /// Reads the sub-sample timer offset/delta from the flags.
+    #[inline(always)]
+    pub fn subsample_offset(&self) -> u8 {
+        self.typed_flags().subsample_offset()
+    }
+
     // Payload conversions
 
+    /// Reads the payload as a raw 32-bit unsigned integer (u32).
+    #[inline(always)]
+    pub fn payload_as_u32(&self) -> u32 {
+        self.payload
+    }
+
     /// Reads the payload as a 32-bit single-precision float (f32).
+    #[inline(always)]
     pub fn payload_as_f32(&self) -> f32 {
         f32::from_bits(self.payload)
     }
 
     /// Reads the payload as a 32-bit signed integer (i32).
+    #[inline(always)]
     pub fn payload_as_i32(&self) -> i32 {
         self.payload as i32
     }
 
     /// Reads the payload as dual-axis coordinates split into X (lower 16 bits) and Y (upper 16 bits).
+    #[inline(always)]
     pub fn payload_as_xy(&self) -> (u16, u16) {
         let x = (self.payload & 0xFFFF) as u16;
         let y = ((self.payload >> 16) & 0xFFFF) as u16;
@@ -78,40 +126,45 @@ impl OmidPacket {
 
     // Constructors with specific payload types
 
-    pub fn new_f32(object_id: u16, event_type: OmidEventType, flags: OmidFlags, val: f32) -> Self {
+    pub fn new_f32(object_id: u16, event_type: EventType, flags: impl Into<OmidFlags>, val: f32) -> Self {
+        let f: OmidFlags = flags.into();
         Self {
             object_id,
             event_type: event_type as u8,
-            flags: flags.0,
+            flags: f.0,
             payload: val.to_bits(),
         }
     }
 
-    pub fn new_i32(object_id: u16, event_type: OmidEventType, flags: OmidFlags, val: i32) -> Self {
+    pub fn new_i32(object_id: u16, event_type: EventType, flags: impl Into<OmidFlags>, val: i32) -> Self {
+        let f: OmidFlags = flags.into();
         Self {
             object_id,
             event_type: event_type as u8,
-            flags: flags.0,
+            flags: f.0,
             payload: val as u32,
         }
     }
 
-    pub fn new_xy(object_id: u16, event_type: OmidEventType, flags: OmidFlags, x: u16, y: u16) -> Self {
+    pub fn new_xy(object_id: u16, event_type: EventType, flags: impl Into<OmidFlags>, x: u16, y: u16) -> Self {
+        let f: OmidFlags = flags.into();
         let payload = (x as u32) | ((y as u32) << 16);
         Self {
             object_id,
             event_type: event_type as u8,
-            flags: flags.0,
+            flags: f.0,
             payload,
         }
     }
 
-    pub fn new_u32(object_id: u16, event_type: OmidEventType, flags: OmidFlags, val: u32) -> Self {
+    pub fn new_u32(object_id: u16, event_type: EventType, flags: impl Into<OmidFlags>, val: u32) -> Self {
+        let f: OmidFlags = flags.into();
         Self {
             object_id,
             event_type: event_type as u8,
-            flags: flags.0,
+            flags: f.0,
             payload: val,
         }
     }
 }
+
