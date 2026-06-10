@@ -9,6 +9,8 @@
 
     <directory_layout>
         <file path="Cargo.toml">Crate manifest configuring standard and no_std features, zero dependencies.</file>
+        <file path="LICENSE-MIT">MIT Open Source License terms.</file>
+        <file path="LICENSE-APACHE">Apache 2.0 Open Source License terms.</file>
         <file path="src/lib.rs">Library root conditionally importing standard modules and exporting core APIs and unit tests.</file>
         <file path="src/event.rs">Core enums mapping EventTypes and ForceProfiles alongside OmidFlags bitwise helpers.</file>
         <file path="src/packet.rs">OmidPacket implementation detailing serialization, haptic feedback, and 12-bit/16-bit high-resolution ADC constructors and getters.</file>
