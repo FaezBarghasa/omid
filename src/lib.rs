@@ -160,11 +160,13 @@ mod tests {
         // Verify bidirectional VisualUpdate confirmation was sent to the tx_queue
         let feedback1 = tx_queue.pop().unwrap();
         assert_eq!(feedback1.event(), EventType::VisualUpdate);
-        assert_eq!(feedback1.object_id, 0);
 
         let feedback2 = tx_queue.pop().unwrap();
         assert_eq!(feedback2.event(), EventType::VisualUpdate);
-        assert_eq!(feedback2.object_id, 1);
+
+        let mut ids = std::vec![feedback1.object_id, feedback2.object_id];
+        ids.sort();
+        assert_eq!(ids, std::vec![0, 1]);
 
         dispatcher.shutdown();
     }

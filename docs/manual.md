@@ -20,6 +20,12 @@ Enable the default `std` feature if you are building host-side applications (DAW
 omid = { version = "2.0.0", features = ["std"] }
 ```
 
+To run the legacy bridge daemon, enable the `bridge` feature:
+```toml
+[dependencies]
+omid = { version = "2.0.0", features = ["bridge"] }
+```
+
 ---
 
 ## 2. Working with Packets
@@ -62,73 +68,90 @@ let haptic_packet = OmidPacket::new_haptic(object_id, profile, intensity);
 
 ## 3. Host System Integration
 
-### Real-Time Parallel Dispatcher
-Spawn a pool of affinity-pinned worker threads to process events without mutex synchronization:
+### Configurable Dispatcher Callbacks
+Register callback handlers for specific object IDs. When a packet is dispatched, the corresponding callback is executed on the real-time worker thread:
 
 ```rust
 use std::sync::Arc;
 use omid::{OmidHostDispatcher, DispatcherStats, OmidPacket, SpscRingBuffer};
 
-fn run_host() {
-    let stats = Arc::new(DispatcherStats::default());
-    
-    // Define SPSC ring buffers for 2 DSP threads
-    let q0 = Arc::new(SpscRingBuffer::<OmidPacket, 4096>::new());
-    let q1 = Arc::new(SpscRingBuffer::<OmidPacket, 4096>::new());
-    let queues = vec![q0, q1];
-    
-    // Spawns worker pools (Worker 0 pinned to Core 2, Worker 1 to Core 3)
-    let dispatcher = OmidHostDispatcher::new(2, queues.clone(), stats.clone());
-    
-    // Route incoming control packets to queues: Voice ID = Object ID % 2
-    let packet = OmidPacket::from_bytes(&[0; 8]);
-    dispatcher.dispatch(packet, &queues).unwrap();
-    
-    // Clean shutdown when done
-    dispatcher.shutdown();
-}
+let stats = Arc::new(DispatcherStats::default());
+let q0 = Arc::new(SpscRingBuffer::<OmidPacket, 4096>::new());
+let rx_queues = vec![q0];
+let tx_queue = Arc::new(SpscRingBuffer::<OmidPacket, 4096>::new());
+
+let dispatcher = OmidHostDispatcher::new(1, rx_queues, tx_queue, stats);
+
+// Register DSP callback for Fader ID 5
+dispatcher.register_callback(5, |packet| {
+    let value = packet.payload_as_f32();
+    println!("Fader 5 updated: {}", value);
+});
 ```
 
-### Unified Audio & Control Transport (UACT)
-Ingest interleaved PCM audio and OMID control packets from physical DMA streams:
+### Latency Measurement Hooks
+Measure physical control round-trip times (RTT) directly:
 
 ```rust
-use omid::{UactDemuxer, ClockSynchronizer};
+// Submit packet and record trigger timestamp
+dispatcher.submit_to_device_with_timestamp(packet).unwrap();
 
-fn process_stream(dma_buffer: &[u8]) {
-    // 2 Audio Channels + Control
-    let mut demuxer = UactDemuxer::<2>::new();
-    let sync = ClockSynchronizer::new(192000, 122880000.0); // 122.88 MHz Clock
-    
-    demuxer.process_bytes(dma_buffer, |frame| {
-        // Access synchronized audio channels
-        let left_channel = frame.audio[0];
-        let right_channel = frame.audio[1];
-        
-        // Check control packet
-        if frame.control.is_keypress() {
-            let offset_ticks = frame.control.typed_flags().subsample_offset();
-            let sample_offset = sync.sample_offset(offset_ticks);
-            println!("Sample-accurate keypress occurred at +{} samples", sample_offset);
-        }
-    }).unwrap();
-}
+// When the device responds, dispatcher automatically updates latency metrics:
+let latency_us = dispatcher.last_rtt_micros();
+println!("Current control loop RTT: {} microseconds", latency_us);
 ```
 
-### Wireless IoT Integration (BLE 5 & WiFi)
-Integrate Bluetooth 5 or WiFi drivers:
+### SpscRingBuffer Batch Operations
+Process packets in batches to minimize thread overhead:
+```rust
+let q = SpscRingBuffer::<i32, 16>::new();
+let items = [1, 2, 3, 4, 5];
+
+// Push a slice of events
+let pushed = q.push_many(&items);
+
+// Pop multiple events
+let mut dest = [0i32; 8];
+let popped = q.pop_many(&mut dest);
+```
+
+---
+
+## 4. MIDI 1.0 & 2.0 Translation
+
+OMID provides native translation modules to integrate seamlessly with existing legacy gear.
+
+### MIDI 1.0 note/CC translation
+```rust
+use omid::Midi1Translator;
+
+// Convert 3-byte MIDI 1.0 raw buffer to OMID
+let midi_msg = [0x90, 0x3C, 0x64]; // Note On
+let packet = Midi1Translator::to_omid(&midi_msg).unwrap();
+
+// Convert OMID back to MIDI 1.0
+let mut out_msg = [0u8; 3];
+Midi1Translator::to_midi1(packet, &mut out_msg).unwrap();
+```
+
+### MIDI 2.0 UMP Sysex8 Packing
+Pack OMID packets into standard 128-bit MIDI 2.0 Sysex8 Universal MIDI Packets (UMP) to travel over standard USB MIDI 2.0 ports:
 
 ```rust
-use omid::{MockHardwareDriver, BleDriver, WifiDriver, OmidDriver, OmidPacket};
+use omid::Midi2UmpTranslator;
 
-fn run_ble_simulation() {
-    let hardware = MockHardwareDriver::new();
-    let mut driver = BleDriver::new(hardware, true, 256, true);
-    
-    driver.connect();
-    
-    // Send a fader packet over BLE characteristic notifications / L2CAP CoC
-    let packet = OmidPacket::from_bytes(&[0; 8]);
-    driver.submit_control(packet).unwrap();
-}
+// Pack to 4 x u32 UMP words
+let ump_words = Midi2UmpTranslator::pack_to_sysex8(packet, 0x01 /* group */, 0x55 /* stream ID */);
+
+// Unpack back to OMID
+let decoded_packet = Midi2UmpTranslator::unpack_from_sysex8(ump_words).unwrap();
 ```
+
+---
+
+## 5. Running the Legacy Bridge Daemon
+To start translating and routing MIDI port data on the host machine:
+```bash
+cargo run --bin bridge --features bridge
+```
+The daemon binds to standard system MIDI ports (ALSA/CoreMIDI/Windows MIDI) and translates traffic on-the-fly.

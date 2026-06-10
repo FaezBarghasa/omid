@@ -52,6 +52,9 @@ A frame with $C$ audio channels contains:
 1. **Audio block ($C \times 4$ bytes):** IEEE 754 32-bit floats.
 2. **Control block ($8$ bytes):** Standard 8-byte `OmidPacket`.
 
+### Optimized circular buffer stream parsing
+The `UactDemuxer` utilizes a zero-copy circular buffer algorithm over a fixed `[u8; 1024]` array. By employing head and tail indexes, it processes fully aligned incoming frames directly in-place without memory movement. Shifting operations via `copy_within` are only executed when space runs out at the end of the accumulator, maximizing throughput for high-rate audio streams.
+
 ### Clock Synchronization
 Control event offsets are measured in ticks of the master PLL clock (122.88 MHz or 112.896 MHz) relative to the start of the audio sample period. 
 $$\text{Sample Offset} = \frac{\text{Timer Delta}}{\text{PLL Clock Frequency}} \times \text{Sample Rate}$$
@@ -59,15 +62,16 @@ This achieves sub-microsecond control timestamp accuracy at standard audio rates
 
 ---
 
-## 3. Parallel Dispatch Pipeline
+## 3. Lock-Free Host Parallel Dispatcher
+
 Modern DAWs and synthesis engines process DSP operations in parallel. Omid host dispatching maps control packets to individual real-time threads using a lock-free Single-Producer Multi-Consumer (SPMC) routing ring:
 
 ```
                        INCOMING OMID BULK STREAM
-                                   │
-                                   ▼
-                       [LOCK-FREE SPSC GENERATOR]
-                                   │
+                                    │
+                                    ▼
+                        [LOCK-FREE SPSC GENERATOR]
+                                    │
          ┌─────────────────────────┼─────────────────────────┐
          ▼                         ▼                         ▼
    [WORKER THREAD 1]         [WORKER THREAD 2]         [WORKER THREAD 3]
@@ -78,11 +82,29 @@ Worker thread indices are allocated using a lock-free hash:
 $$\text{Voice ID} = \text{Object ID} \pmod{\text{Thread Count}}$$
 This prevents synchronization locks and mutex bottlenecks on core sweeps. Adaptive spin-locking yields and sleeps to prevent pegging cores during idle states.
 
+### Bidirectional Event Flow
+In addition to incoming event routing, `OmidHostDispatcher` incorporates a lock-free transmit queue (`tx_queue`). When a worker thread (VST synth) processes a keypress or fader event, it can push confirmation or visual feedback commands (e.g., lighting up LEDs or driving motorized faders) directly back to the device. Host applications can also submit events to `tx_queue` to handle GUI or automation updates.
+
 ---
 
-## 4. Platform and Wireless Driver Interface
+## 4. Cache-Aligned SpscRingBuffer
+To eliminate lock contention and cache thrashing:
+- The read and write indexes are wrapped in a 64-byte aligned wrapper structure (`#[repr(align(64))]`), placing them on completely separate cache lines. This prevents **false sharing** between the producer (receiver) thread and consumer (DSP/worker) threads.
+- Division/modulo operations in the ring buffer are completely eliminated on the hot path by requiring capacities to be a power of two, replacing index calculations with a bitwise mask operation: `index & (N - 1)`.
+- Batch `push_many` and `pop_many` methods are available to handle block DMA transfers directly.
+
+---
+
+## 5. Backward Compatibility & MIDI Translation
+- **MIDI 1.0 Translator**: Converts MIDI Note On/Off, Control Change (CC), and Pitch Bend events into 8-byte Omid packets (and vice versa) on the fly.
+- **MIDI 2.0 UMP Translator**: Encapsulates 8-byte Omid packets inside standard 128-bit MIDI 2.0 System Exclusive 8 (Sysex8) Universal MIDI Packets (UMP) to travel over standard MIDI 2.0 transport stacks.
+- **Legacy Bridge Daemon**: A service daemon that uses `midir` to bind to standard OS MIDI ports and bridges data to Omid in real time.
+
+---
+
+## 6. Platform and Wireless Driver Interface
 To bypass standard OS queue delays, Omid specifies direct DMA and hardware-bypass interfaces:
-- **Linux:** `io_uring` and raw `usbfs` to submit asynchronous queues directly to physical USB filesystems.
+- **Linux:** `/dev/omid0` character driver support falling back to `io_uring`/`usbfs`.
 - **Windows:** WinUSB overlapped I/O mapped to I/O Completion Ports (IOCP) alongside page-locked buffers (`VirtualLock`).
 - **macOS:** USBDriverKit execution pools with real-time Darwin scheduler (Thread Time Constraint policy) flags.
 - **Bluetooth 5:** High-throughput GATT characteristic notifications and L2CAP Connection-Oriented Channels utilizing BLE 2M PHY.

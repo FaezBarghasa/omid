@@ -42,7 +42,7 @@ cp "$PROJECT_ROOT/bindings/kotlin/Omid.kt" "$JAVA_DIR/Omid.kt"
 echo "Compiling native libraries for Android targets..."
 cd "$PROJECT_ROOT"
 
-cargo ndk -t arm64-v8a -t armeabi-v7a -t x86 -t x86_64 -o "$JNILIBS_DIR" build --release --all-features
+cargo ndk -t arm64-v8a -t armeabi-v7a -t x86 -t x86_64 -o "$JNILIBS_DIR" build --release
 
 echo "Android Library module built successfully at $SCRIPT_DIR"
 echo "You can import this directory directly into Android Studio as a module, or compile it with Gradle."

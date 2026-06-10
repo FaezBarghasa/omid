@@ -9,8 +9,12 @@
 - **High-Resolution ADC Support:** Native support for 12-bit faders (`0..=4095`) and 16-bit keys (`0..=65535`), automatically setting the `RAW_DATA` flag.
 - **Haptic Force Feedback:** Bi-directional electromagnetic force feedback profiles (Hammer Strike, Spring Tension, Kinetic Dampening) with dynamic intensity control.
 - **Unified Audio & Control Transport (UACT):** Synchronized PCM channels and OMID control signals packed into single clock-locked DMA frames (supporting sample clocks up to 192kHz).
-- **Parallel Host Dispatcher:** A lock-free Single-Producer Multi-Consumer (SPMC) routing engine mapping events to affinity-pinned real-time DSP threads.
-- **IoT & Platform Driver Wrappers:** Out-of-the-box simulations for Linux (`io_uring`/`usbfs`), Windows (`WinUSB` IOCP), macOS (`USBDriverKit`), Bluetooth 5 (GATT MTU & L2CAP Connection-Oriented Channels), and WiFi (TCP/UDP socket streaming).
+- **Parallel Host Dispatcher:** A lock-free Single-Producer Multi-Consumer (SPMC) routing engine mapping events to affinity-pinned real-time DSP threads with a **configurable callback API**.
+- **Real-Time Latency Auditing**: Built-in monotonic timer hooks to measure round-trip time (RTT) from host submission to device response.
+- **MIDI 1.0 & 2.0 Translation**: Convert Omid events to/from Note On/Off, CC, Pitch Bend, and pack Omid into 128-bit MIDI 2.0 Sysex8 Universal MIDI Packets (UMP).
+- **On-the-Fly Bridge Daemon**: Exposes standard MIDI ports (using `midir`) and translates messages to Omid on the fly.
+- **Optimized SPSC Queue**: Cache-line aligned write/read indexes to prevent false sharing, power-of-two capacity masking, and batch `push_many`/`pop_many` methods.
+- **IoT & Platform Driver Interfaces**: Real TCP/UDP sockets (`WifiDriver`), `/dev/omid0` usbfs support (`LinuxDriver`), Ble GATT (`BleDriver`), WebUSB browser bindings, and Windows INF configurations.
 
 ## Usage
 
@@ -47,7 +51,7 @@ fn main() {
     let mut demuxer = UactDemuxer::<2>::new();
     let raw_dma_bytes: [u8; 16] = [0; 16]; // Filled by USB/DMA stream...
 
-    // Zero-allocation stream parsing
+    // Zero-allocation stream parsing (optimized ring-buffer parsing)
     demuxer.process_bytes(&raw_dma_bytes, |frame| {
         println!("Received frame with audio: {:?}", frame.audio);
         let subsample_offset = frame.control.typed_flags().subsample_offset();
@@ -59,6 +63,15 @@ fn main() {
     }).unwrap();
 }
 ```
+
+### Running the Legacy Bridge Daemon
+
+To launch the CLI bridge on the host and expose Omid devices as standard MIDI ports:
+```bash
+cargo run --bin bridge --features bridge
+```
+
+---
 
 ## Packet Structure
 

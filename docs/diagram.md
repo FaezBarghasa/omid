@@ -48,9 +48,9 @@ sequenceDiagram
 
     Hardware->>DMA Buffer: Write UactFrame (Audio Chan 1..C + 8-byte OmidPacket)
     DMA Buffer->>UactDemuxer: Stream bytes (process_bytes)
-    UactDemuxer->>UactDemuxer: Extract Audio and Control
+    UactDemuxer->>UactDemuxer: Extract Audio and Control (Circular Buffer)
     UactDemuxer->>ClockSynchronizer: Get subsample_offset (timer_delta)
-    ClockSynchronizer->>ClockSynchronizer: Convert ticks (122.88 MHz) to fractional sample offset
+    ClockSynchronizer->>ClockSynchronizer: Convert ticks to fractional sample offset
     UactDemuxer->>DSP Engine: Dispatch Audio & sample-accurate Control Event
 ```
 
@@ -99,5 +99,46 @@ flowchart LR
         BleDrv -->|OmidDriver| CoreQueue[(SpscRingBuffer)]
         WifiDrv -->|OmidDriver| CoreQueue
         CoreQueue --> HostDsp[Real-time DSP Processing]
+    end
+```
+
+---
+
+## 5. Bidirectional Loop & Dispatcher Callbacks
+
+Demonstrates how parameter updates sync back and forth between VST GUI/DSP and physical hardware.
+
+```mermaid
+sequenceDiagram
+    participant Hardware Knob
+    participant OmidHostDispatcher
+    participant VST DSP Callback
+    participant VST GUI / Automation
+    participant Driver TX Queue
+    participant Motorized Fader / LED
+
+    Hardware Knob->>OmidHostDispatcher: Incoming Control Packet (Knob rotated)
+    OmidHostDispatcher->>VST DSP Callback: Trigger Callback Registry (e.g. obj_id = 42)
+    VST DSP Callback->>Driver TX Queue: Push response (echo fader LED update)
+    VST GUI / Automation->>Driver TX Queue: Submit packet (User slides GUI fader)
+    Driver TX Queue->>Motorized Fader / LED: Stream packet to Hardware
+```
+
+---
+
+## 6. SpscRingBuffer Cache-Line Memory Layout
+
+Prevents CPU core cache bouncing (false sharing) by isolating indices to different 64-byte boundaries.
+
+```mermaid
+graph LR
+    subgraph Cache Line 1 (64 Bytes)
+        buf[Data Buffer Array]
+    end
+    subgraph Cache Line 2 (64 Bytes)
+        write_idx[write_idx: AtomicUsize]
+    end
+    subgraph Cache Line 3 (64 Bytes)
+        read_idx[read_idx: AtomicUsize]
     end
 ```
