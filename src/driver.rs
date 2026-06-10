@@ -70,7 +70,7 @@ impl OmidDriver for MockHardwareDriver {
 
 /// Linux-specific raw usbfs & io_uring zero-copy bypass simulation driver.
 pub struct LinuxDriver {
-    hardware: MockHardwareDriver,
+    pub hardware: MockHardwareDriver,
     uring_active: Arc<AtomicBool>,
 }
 
@@ -115,7 +115,7 @@ impl OmidDriver for LinuxDriver {
 
 /// Windows-specific WinUSB Overlapped I/O Completion Port (IOCP) simulation driver.
 pub struct WindowsDriver {
-    hardware: MockHardwareDriver,
+    pub hardware: MockHardwareDriver,
     iocp_thread_count: usize,
 }
 
@@ -160,7 +160,7 @@ impl OmidDriver for WindowsDriver {
 
 /// macOS USBDriverKit & Real-time Time Constraint Thread Policy simulation driver.
 pub struct MacosDriver {
-    hardware: MockHardwareDriver,
+    pub hardware: MockHardwareDriver,
 }
 
 impl MacosDriver {

@@ -177,4 +177,35 @@ mod tests {
         let expected_sample_offset = expected_seconds * 192000.0;
         assert!((sample_offset - expected_sample_offset).abs() < 1e-12);
     }
+
+    #[test]
+    #[cfg(feature = "std")]
+    fn test_driver_and_overflow() {
+        let hardware = MockHardwareDriver::new();
+        let driver = LinuxDriver::new(hardware);
+
+        // Test submission and polling of control packets
+        let flags = OmidFlags::new(false, false, false, 0);
+        let p = OmidPacket::new_adc12(5, EventType::AbsoluteChange, flags, 4000);
+        driver.submit_control(p).unwrap();
+        let polled = driver.poll_control().unwrap();
+        assert_eq!(polled.object_id, 5);
+        assert_eq!(polled.payload_as_adc12(), 4000);
+
+        // Test audio submission and polling
+        driver.submit_audio(0.75f32).unwrap();
+        // Since submit_audio pushes to ep3_out, let's verify it got queued
+        assert_eq!(driver.hardware.ep3_out.pop(), Some(0.75f32));
+
+        // Test high-throughput control queue saturation (capacity is 4096)
+        for i in 0..4096 {
+            let p_i = OmidPacket::new_adc12(i as u16, EventType::AbsoluteChange, flags, i as u16);
+            driver.submit_control(p_i).unwrap();
+        }
+        // Next push should fail due to saturation/overflow
+        let p_overflow = OmidPacket::new_adc12(9999, EventType::AbsoluteChange, flags, 0);
+        let res = driver.submit_control(p_overflow);
+        assert!(res.is_err());
+        assert_eq!(res.unwrap_err(), "Queue Overflow - DSP Buffer Saturated");
+    }
 }
