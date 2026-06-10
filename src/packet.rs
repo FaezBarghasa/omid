@@ -1,7 +1,7 @@
 use crate::event::{EventType, OmidFlags};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(C, align(4))]
+#[repr(C)]
 pub struct OmidPacket {
     pub object_id: u16,
     pub event_type: u8,

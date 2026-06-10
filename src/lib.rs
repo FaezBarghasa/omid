@@ -8,6 +8,7 @@ pub mod packet;
 pub mod queue;
 pub mod topology;
 pub mod uact;
+pub mod ffi;
 
 #[cfg(feature = "std")]
 pub mod dispatcher;

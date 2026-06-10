@@ -1,4 +1,5 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(C)]
 pub struct TopologyDescriptor {
     pub object_id: u16,
     pub object_type: u8,

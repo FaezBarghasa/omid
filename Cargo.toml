@@ -15,3 +15,7 @@ std = []
 [lib]
 name = "omid"
 path = "src/lib.rs"
+crate-type = ["rlib", "cdylib"]
+
+[build-dependencies]
+cbindgen = "0.29.2"
