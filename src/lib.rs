@@ -9,6 +9,7 @@ pub mod queue;
 pub mod topology;
 pub mod uact;
 pub mod ffi;
+pub mod error;
 
 #[cfg(feature = "std")]
 pub mod dispatcher;
@@ -20,6 +21,7 @@ pub use event::{OmidEventType, OmidFlags, ForceProfile};
 pub use packet::OmidPacket;
 pub use topology::TopologyDescriptor;
 pub use uact::{UactFrame, UactDemuxer, ClockSynchronizer};
+pub use error::OmidError;
 
 #[cfg(feature = "std")]
 pub use dispatcher::{OmidHostDispatcher, DispatcherStats};
